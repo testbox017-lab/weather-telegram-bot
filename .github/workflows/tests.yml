@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.14"]   # 3.12 — как на сервере (Docker), 3.14 — как на Windows
+        python-version: ["3.12", "3.14"]   # 3.14 — как на сервере (Docker) и на Windows, 3.12 — для запуска без Docker (вариант B в DEPLOY.md)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
