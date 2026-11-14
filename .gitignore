@@ -11,3 +11,4 @@ data/
 *.log
 test_*.png
 python_path.txt
+subscriptions.json

@@ -71,6 +71,12 @@ class WeatherClient:
             "forecast_days": max(days, 2),
         })
 
+    async def timezone(self, place: Place) -> str:
+        """Часовой пояс места (IANA, например Europe/Kyiv) по данным Open-Meteo."""
+        data = await self._get(FORECAST_URL, {"latitude": place.lat, "longitude": place.lon,
+                                              "current": "temperature_2m", "timezone": "auto"})
+        return data.get("timezone") or "UTC"
+
     async def fetch_day(self, place: Place, day, archive: bool = False) -> dict:
         """Почасовые (00–23) и суточные данные за одну дату: прогноз или архив."""
         hourly, daily = HOURLY_VARS, DAILY_VARS

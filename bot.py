@@ -2,13 +2,14 @@
 import asyncio
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from html import escape
 
 import aiohttp
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message,
@@ -20,6 +21,8 @@ from dates import (build_cal_cb, build_date_cb, calendar_days, date_source, pars
                    parse_date_cb, source_error, split_date_args)
 from places import (DEFAULT_NAME, FAV_LIMIT, Favorites, LastPlaces, build_cb, coords_name, parse_cb,
                     parse_coords)
+from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, describe as describe_sched, local_time,
+                  parse_schedule, run_due, split_place_schedule)
 from weather import DAYS_RU, Place, WeatherClient, format_day, format_forecast
 
 router = Router()
@@ -41,6 +44,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR") or Path(__file__).parent)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 last_places = LastPlaces(DATA_DIR / "last_places.json")
 saved = Favorites(DATA_DIR / "saved_places.json")
+subs = Subscriptions(DATA_DIR / "subscriptions.json")
 waiting: dict[int, tuple[str, Place | None]] = {}  # ждём от пользователя место ("add") или дату ("date")
 
 BTN_GEO = "📍 Моя геолокация"
@@ -49,6 +53,7 @@ BTN_WEEK = "📅 Прогноз на неделю"
 BTN_HELP = "❓ Помощь"
 BTN_PLACES = "⭐ Мои места"
 BTN_DATE = "📆 Выбрать дату"
+BTN_SUBS = "🔔 Рассылка"
 NO_PLACE = "Напишите название города или нажмите «📍 Моя геолокация»"
 ASK_PLACE = ("Отправьте название города, координаты (например <code>51.18, 32.83</code>) "
              "или геолокацию — добавлю в «Мои места»")
@@ -57,7 +62,7 @@ keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_GEO, request_location=True), KeyboardButton(text=BTN_NOW)],
         [KeyboardButton(text=BTN_WEEK), KeyboardButton(text=BTN_HELP)],
-        [KeyboardButton(text=BTN_PLACES), KeyboardButton(text=BTN_DATE)],
+        [KeyboardButton(text=BTN_PLACES), KeyboardButton(text=BTN_DATE), KeyboardButton(text=BTN_SUBS)],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -82,7 +87,12 @@ HELP = (
     "• ⭐ В мои места — кнопка под прогнозом\n\n"
     f"{BTN_DATE} — погода на любую дату (прогноз до 16 дней вперёд, архив с 1940 года):\n"
     "• /date <i>21.11</i> или <i>21.11.2026</i>, <i>завтра</i>, <i>вчера</i> [город или координаты]\n"
-    "• 📆 Другая дата — кнопка под прогнозом"
+    "• 📆 Другая дата — кнопка под прогнозом\n\n"
+    f"{BTN_SUBS} — бот сам присылает погоду (до {SUB_LIMIT} рассылок):\n"
+    "• /subscribe [город] — выбрать периодичность: каждый 1/3/6/12 ч, раз в сутки или в своё время\n"
+    "• /subscribe <i>Бахмач 3ч</i> или <i>Бахмач 08:00, 20:00</i> — сразу\n"
+    "• /subs — ваши рассылки, /unsubscribe <i>номер</i> или <i>all</i> — отключить\n"
+    "• 🔔 Подписаться — кнопка под прогнозом"
 )
 
 
@@ -102,6 +112,7 @@ def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text=other[1], callback_data=build_cb(other[0], place.lat, place.lon))],
         [InlineKeyboardButton(text="⭐ В мои места", callback_data=f"fa:{place.lat:.3f}:{place.lon:.3f}"),
          InlineKeyboardButton(text="📆 Другая дата", callback_data=build_cal_cb("f", place.lat, place.lon))],
+        [InlineKeyboardButton(text="🔔 Подписаться", callback_data=f"sb:{place.lat:.3f}:{place.lon:.3f}")],
     ])
 
 
@@ -195,12 +206,12 @@ async def send_album(m: Message, text: str, pngs: list[bytes] | None, markup, sh
     await m.answer(short if fits else text, reply_markup=markup)
 
 
-async def send_weather(m: Message, place: Place, days: int, user_id: int | None = None):
+async def send_weather(m, place: Place, days: int, user_id: int | None = None, header: str = ""):
     """Текст прогноза (+ солнце и луна), альбом из двух графиков и inline-кнопки."""
     data = await client.fetch(place, days)
     if user_id is not None:
         last_places.set(user_id, place)
-    text = format_forecast(place.name, data, days)
+    text = header + format_forecast(place.name, data, days)
     try:
         text += "\n\n" + astro_text(place.lat, place.lon, data)
     except Exception:
@@ -475,6 +486,209 @@ async def on_date_button(cb: CallbackQuery):
     await send_day(cb.message, Place(place_name(cb.from_user.id, lat, lon), lat, lon), day, cb.from_user.id)
 
 
+# ---------- Рассылка по расписанию ----------
+
+class ChatTarget:
+    """Минимальная замена Message для отправки без входящего сообщения (рассылка)."""
+
+    def __init__(self, bot: Bot, chat_id: int):
+        self.bot, self.chat_id = bot, chat_id
+
+    async def answer(self, text: str, reply_markup=None):
+        return await self.bot.send_message(self.chat_id, text, reply_markup=reply_markup)
+
+    async def answer_media_group(self, media):
+        return await self.bot.send_media_group(self.chat_id, media)
+
+
+def sched_cb(kind: str, value: str, place: Place) -> str:
+    """kind: 'h' — каждые N часов, 't' — время ЧЧММ, 'i' — ввести своё время."""
+    return f"s{kind}:{value}:{place.lat:.3f}:{place.lon:.3f}"
+
+
+def schedule_markup(place: Place) -> InlineKeyboardMarkup:
+    b = InlineKeyboardButton
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [b(text="Каждый час", callback_data=sched_cb("h", "1", place)),
+         b(text="Каждые 3 ч", callback_data=sched_cb("h", "3", place))],
+        [b(text="Каждые 6 ч", callback_data=sched_cb("h", "6", place)),
+         b(text="Каждые 12 ч", callback_data=sched_cb("h", "12", place))],
+        [b(text=f"{t}", callback_data=sched_cb("t", t.replace(":", ""), place))
+         for t in ("07:00", "08:00", "09:00", "20:00")],
+        [b(text="✏️ Своё время", callback_data=sched_cb("i", "0", place)),
+         b(text="✖️ Отмена", callback_data="x")],
+    ])
+
+
+def subs_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    items = subs.list(user_id)
+    rows = [[InlineKeyboardButton(text=f"❌ {i}. {s['name']} — {describe_sched(s['sched'])}"[:60],
+                                  callback_data=f"su:rm:{s['id']}")] for i, s in enumerate(items, 1)]
+    rows.append([InlineKeyboardButton(text="➕ Новая рассылка", callback_data="su:new")])
+    if not items:
+        return ("🔔 Рассылок пока нет. Бот может сам присылать погоду каждый час, раз в сутки или в "
+                "выбранное время.", InlineKeyboardMarkup(inline_keyboard=rows))
+    lines = [f"{i}. {escape(s['name'])} — {describe_sched(s['sched'])}, следующая {local_time(datetime.fromisoformat(s['next']), s['tz'])}"
+             for i, s in enumerate(items, 1)]
+    return "🔔 Ваши рассылки (нажмите ❌, чтобы отключить):\n" + "\n".join(lines), \
+        InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def ask_schedule(m: Message, place: Place):
+    await m.answer(f"🔔 Как часто присылать погоду для «{escape(place.name)}»?\n"
+                   "Время для ежедневной рассылки — по местному времени этого места.",
+                   reply_markup=schedule_markup(place))
+
+
+async def create_sub(m: Message, user_id: int, place: Place, sched: dict):
+    try:
+        tz = await client.timezone(place)
+    except Exception:
+        logging.exception("timezone error")
+        await m.answer("Не удалось узнать часовой пояс места, попробуйте чуть позже 🙏")
+        return
+    sub = subs.add(user_id, place, sched, tz, datetime.now(timezone.utc))
+    if not sub:
+        await m.answer(f"У вас уже {SUB_LIMIT} рассылок — отключите лишнюю в /subs")
+        return
+    await m.answer(f"✅ Рассылка включена: {escape(place.name)} — {describe_sched(sched)}.\n"
+                   f"Следующая: {local_time(datetime.fromisoformat(sub['next']), tz)} ({tz}).\n"
+                   "Управление — /subs", reply_markup=keyboard)
+
+
+@router.message(Command("subscribe"))
+async def subscribe_cmd(m: Message, command: CommandObject):
+    uid = m.from_user.id
+    waiting.pop(uid, None)
+    args = (command.args or "").strip()
+    coords = parse_coords(args)
+    query, sched = (args, None) if coords and not coords[2] else split_place_schedule(args)
+    if query:
+        place = await resolve_place(m, query)
+        if not place:
+            return
+    else:
+        place = last_places.get(uid)
+        if not place:
+            await m.answer(NO_PLACE, reply_markup=keyboard)
+            return
+    if sched:
+        await create_sub(m, uid, place, sched)
+    else:
+        await ask_schedule(m, place)
+
+
+@router.message(Command("subs"))
+async def subs_cmd(m: Message):
+    waiting.pop(m.from_user.id, None)
+    text, markup = subs_view(m.from_user.id)
+    await m.answer(text, reply_markup=markup)
+
+
+@router.message(F.text == BTN_SUBS)
+async def btn_subs(m: Message):
+    await subs_cmd(m)
+
+
+@router.message(Command("unsubscribe"))
+async def unsubscribe_cmd(m: Message, command: CommandObject):
+    uid = m.from_user.id
+    waiting.pop(uid, None)
+    key = (command.args or "").strip().lower()
+    if not key:
+        text, markup = subs_view(uid)
+        await m.answer(text, reply_markup=markup)
+        return
+    if key in ("all", "все", "всё"):
+        n = subs.remove_all(uid)
+        await m.answer(f"🔕 Отключено рассылок: {n}" if n else "Рассылок не было.")
+        return
+    removed = subs.remove_index(uid, int(key)) if key.isdigit() else None
+    if removed:
+        await m.answer(f"🔕 Отключена: {escape(removed['name'])} — {describe_sched(removed['sched'])}")
+    else:
+        await m.answer("Нет рассылки с таким номером. Список — /subs")
+
+
+@router.callback_query(F.data.startswith("sb:"))
+async def on_subscribe_button(cb: CallbackQuery):
+    try:
+        _, lat, lon = cb.data.split(":")
+        lat, lon = float(lat), float(lon)
+    except ValueError:
+        await cb.answer("Кнопка устарела", show_alert=True)
+        return
+    await cb.answer()
+    if isinstance(cb.message, Message):
+        await ask_schedule(cb.message, Place(place_name(cb.from_user.id, lat, lon), lat, lon))
+
+
+@router.callback_query(F.data.regexp(r"^s[hti]:"))
+async def on_schedule_button(cb: CallbackQuery):
+    try:
+        kind, value, lat, lon = cb.data.split(":")
+        lat, lon = float(lat), float(lon)
+    except ValueError:
+        await cb.answer("Кнопка устарела", show_alert=True)
+        return
+    if not isinstance(cb.message, Message):
+        await cb.answer("Сообщение устарело, используйте /subscribe", show_alert=True)
+        return
+    await cb.answer()
+    place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
+    if kind == "si":
+        waiting[cb.from_user.id] = ("sub", place)
+        await cb.message.answer(f"Напишите время (до {MAX_TIMES}), например <code>07:30</code> или "
+                                "<code>08:00, 20:00</code>", reply_markup=cancel_markup())
+        return
+    sched = parse_schedule(value if kind == "sh" else f"{value[:2]}:{value[2:]}")
+    if not sched:
+        await cb.message.answer("Не понял расписание, попробуйте /subscribe ещё раз")
+        return
+    await create_sub(cb.message, cb.from_user.id, place, sched)
+
+
+@router.callback_query(F.data.startswith("su:"))
+async def on_subs_button(cb: CallbackQuery):
+    if not isinstance(cb.message, Message):
+        await cb.answer("Сообщение устарело, откройте /subs", show_alert=True)
+        return
+    uid, action = cb.from_user.id, cb.data[3:]
+    if action == "new":
+        await cb.answer()
+        place = last_places.get(uid)
+        if not place:
+            await cb.message.answer(NO_PLACE, reply_markup=keyboard)
+        else:
+            await ask_schedule(cb.message, place)
+        return
+    removed = subs.remove(uid, int(action[3:])) if action.startswith("rm:") and action[3:].isdigit() else None
+    await cb.answer("🔕 Рассылка отключена" if removed else "Уже отключена")
+    text, markup = subs_view(uid)
+    try:
+        await cb.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        await cb.message.answer(text, reply_markup=markup)
+
+
+async def scheduler(bot: Bot, every: float = 30):
+    """Фоновая задача: раз в `every` секунд отправляет наступившие рассылки."""
+    logging.info("scheduler started: %d subscriptions", sum(len(v) for v in subs._data.values()))
+
+    async def send(uid: int, sub: dict):
+        await send_weather(ChatTarget(bot, uid), Subscriptions.place(sub), 1,
+                           header=f"🔔 <b>Рассылка:</b> {describe_sched(sub['sched'])}\n")
+
+    while True:
+        try:
+            n = await run_due(subs, datetime.now(timezone.utc), send, (TelegramForbiddenError,))
+            if n:
+                logging.info("scheduler: sent %d", n)
+        except Exception:
+            logging.exception("scheduler error")
+        await asyncio.sleep(every)
+
+
 # ---------- Общие кнопки и ввод ----------
 
 @router.message(Command("week"))
@@ -540,6 +754,15 @@ async def by_text(m: Message):
         else:
             waiting[uid] = state  # даём попробовать ещё раз
         return
+    if state and state[0] == "sub":
+        sched = parse_schedule(m.text)
+        if not sched or "times" not in sched:
+            waiting[uid] = state
+            await m.answer(f"Не понял время. Пример: <code>07:30</code> или <code>08:00, 20:00</code> "
+                           f"(не больше {MAX_TIMES})", reply_markup=cancel_markup())
+            return
+        await create_sub(m, uid, state[1], sched)
+        return
     if state and state[0] == "date":
         day = parse_date(m.text, date.today())
         if not day:
@@ -570,13 +793,20 @@ async def main():
             BotCommand(command="places", description="Мои места"),
             BotCommand(command="add", description="Добавить место: /add Город или /add 51.18 32.83"),
             BotCommand(command="del", description="Удалить место: /del номер или название"),
+            BotCommand(command="subscribe", description="Рассылка погоды: /subscribe Город 3ч"),
+            BotCommand(command="subs", description="Мои рассылки"),
+            BotCommand(command="unsubscribe", description="Отключить рассылку: /unsubscribe номер|all"),
             BotCommand(command="help", description="Справка"),
         ])
     except Exception:
         logging.exception("set_my_commands error")
     async with aiohttp.ClientSession() as session:
         client = WeatherClient(session)
-        await dp.start_polling(bot)
+        task = asyncio.create_task(scheduler(bot))
+        try:
+            await dp.start_polling(bot)
+        finally:
+            task.cancel()
 
 
 if __name__ == "__main__":
