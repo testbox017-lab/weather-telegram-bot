@@ -48,3 +48,54 @@ async def test_forecast_params():
     c = FakeClient([{"current": CURRENT, "daily": DAILY}])
     await c.forecast(Place("X", 1, 2), 7)
     assert c.calls[0][1]["forecast_days"] == 7 and c.calls[0][1]["wind_speed_unit"] == "ms"
+
+
+class FakeResponse:
+    def __init__(self, status, body=None):
+        self.status, self.body = status, body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    def raise_for_status(self):
+        import aiohttp
+        if self.status >= 400:
+            raise aiohttp.ClientResponseError(None, (), status=self.status)
+
+    async def json(self):
+        return self.body
+
+
+class FakeSession:
+    def __init__(self, statuses):
+        self.statuses, self.calls = list(statuses), 0
+
+    def get(self, url, params=None, timeout=None):
+        self.calls += 1
+        return FakeResponse(self.statuses.pop(0), {"ok": True})
+
+
+@pytest.mark.asyncio
+async def test_retry_on_503():
+    s = FakeSession([503, 503, 200])
+    c = WeatherClient(s)
+    c.retry_delays = (0, 0)
+    assert await c._get("u", {}) == {"ok": True} and s.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_no_retry_on_400_and_gives_up():
+    import aiohttp
+    c = WeatherClient(FakeSession([400]))
+    c.retry_delays = (0, 0)
+    with pytest.raises(aiohttp.ClientResponseError):
+        await c._get("u", {})
+    s = FakeSession([503, 503, 503])
+    c = WeatherClient(s)
+    c.retry_delays = (0, 0)
+    with pytest.raises(aiohttp.ClientResponseError):
+        await c._get("u", {})
+    assert s.calls == 3

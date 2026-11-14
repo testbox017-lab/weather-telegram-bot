@@ -24,10 +24,10 @@ from dates import (build_cal_cb, build_date_cb, calendar_days, date_source, pars
 from places import (DEFAULT_NAME, FAV_LIMIT, Favorites, LastPlaces, build_cb, coords_name, parse_cb,
                     parse_coords)
 from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, describe as describe_sched, local_time,
-                  parse_schedule, run_due, split_place_schedule)
+                  parse_schedule, run_due, split_place_schedule, split_short)
 import health
 from weather import (ARCHIVE_URL, DAYS_RU, FORECAST_URL, GEO_URL, Place, WeatherClient, format_day,
-                     format_forecast)
+                     format_forecast, format_short)
 
 router = Router()
 client: WeatherClient  # создаётся в main()
@@ -86,7 +86,7 @@ HELP = (
     "Кнопки внизу:\n"
     f"• {BTN_GEO} — погода там, где вы сейчас\n"
     f"• {BTN_NOW} и {BTN_WEEK} — для последнего города или места\n"
-    "• Под прогнозом: 🔄 Обновить и переключение сегодня/неделя\n"
+    "• Под прогнозом: 🔄 Обновить (перерисует тот же прогноз) и переключение сегодня/неделя\n"
     "/weather и /week без города тоже показывают последнее место\n"
     "• Координаты текстом, например <code>51.18, 32.83</code>, — погода в этой точке\n"
     "• Если городов с таким названием несколько, предложу выбрать кнопками. Можно сразу уточнить "
@@ -102,6 +102,7 @@ HELP = (
     f"{BTN_SUBS} — бот сам присылает погоду (до {SUB_LIMIT} рассылок):\n"
     "• /subscribe [город] — выбрать периодичность: каждый 1/3/6/12 ч, раз в сутки или в своё время\n"
     "• /subscribe <i>Бахмач 3ч</i> или <i>Бахмач 08:00, 20:00</i> — сразу\n"
+    "• добавьте <i>кратко</i> — три строки без графиков (переключается и в /subs)\n"
     "• /subs — ваши рассылки, /unsubscribe <i>номер</i> или <i>all</i> — отключить\n"
     "• 🔔 Подписаться — кнопка под прогнозом\n\n"
     f"{BTN_PING} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
@@ -120,7 +121,7 @@ def place_name(user_id: int, lat: float, lon: float) -> str:
 def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
     other = (7, "📅 Неделя") if days == 1 else (1, "🌤 Сегодня")
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Обновить", callback_data=build_cb(days, place.lat, place.lon)),
+        [InlineKeyboardButton(text="🔄 Обновить", callback_data="r" + build_cb(days, place.lat, place.lon)[1:]),
          InlineKeyboardButton(text=other[1], callback_data=build_cb(other[0], place.lat, place.lon))],
         [InlineKeyboardButton(text="⭐ В мои места", callback_data=f"fa:{place.lat:.3f}:{place.lon:.3f}"),
          InlineKeyboardButton(text="📆 Другая дата", callback_data=build_cal_cb("f", place.lat, place.lon))],
@@ -203,26 +204,36 @@ def render_day_charts(name: str, data: dict, day: date) -> list[bytes]:
             wind_humidity_chart(name, data, 1, title=f"{name}: ветер и влажность, {label}")]
 
 
+# (chat_id, id сообщения с кнопками) → id фотографий альбома над ним: для «🔄 Обновить» на месте
+album_ids: dict[tuple[int, int], list[int]] = {}
+ALBUM_MEMORY = 300
+
+
+def _album_media(text: str, pngs: list[bytes]) -> list[InputMediaPhoto]:
+    fits = len(text) <= 1024
+    return [InputMediaPhoto(media=BufferedInputFile(png, filename=f"weather{i}.png"),
+                            caption=text if i == 0 and fits else None)
+            for i, png in enumerate(pngs)]
+
+
 async def send_album(m: Message, text: str, pngs: list[bytes] | None, markup, short: str):
     """Альбом с подписью-текстом; кнопки — отдельным коротким сообщением (альбом их не несёт)."""
     if not pngs:
         await m.answer(text, reply_markup=markup)
         return
-    fits = len(text) <= 1024
-    album = [
-        InputMediaPhoto(media=BufferedInputFile(png, filename=f"weather{i}.png"),
-                        caption=text if i == 0 and fits else None)
-        for i, png in enumerate(pngs)
-    ]
-    await m.answer_media_group(album)
-    await m.answer(short if fits else text, reply_markup=markup)
+    photos = await m.answer_media_group(_album_media(text, pngs))
+    buttons = await m.answer(short if len(text) <= 1024 else text, reply_markup=markup)
+    try:
+        album_ids[(buttons.chat.id, buttons.message_id)] = [p.message_id for p in photos]
+        while len(album_ids) > ALBUM_MEMORY:
+            album_ids.pop(next(iter(album_ids)))
+    except AttributeError:  # подменённые сообщения в тестах
+        pass
 
 
-async def send_weather(m, place: Place, days: int, user_id: int | None = None, header: str = ""):
-    """Текст прогноза (+ солнце и луна), альбом из двух графиков и inline-кнопки."""
+async def build_weather(place: Place, days: int, header: str = ""):
+    """Данные для ответа: (data, текст, картинки или None, короткая подпись для сообщения с кнопками)."""
     data = await client.fetch(place, days)
-    if user_id is not None:
-        last_places.set(user_id, place)
     text = header + format_forecast(place.name, data, days)
     try:
         text += "\n\n" + astro_text(place.lat, place.lon, data)
@@ -234,8 +245,34 @@ async def send_weather(m, place: Place, days: int, user_id: int | None = None, h
         logging.exception("chart error")
         pngs = None
     period = "на сегодня" if days == 1 else "на 7 дней"
-    await send_album(m, text, pngs, forecast_markup(days, place),
-                     f"📍 {escape(place.name)} — прогноз {period}")
+    return data, text, pngs, f"📍 {escape(place.name)} — прогноз {period}"
+
+
+async def send_weather(m, place: Place, days: int, user_id: int | None = None, header: str = ""):
+    """Текст прогноза (+ солнце и луна), альбом из двух графиков и inline-кнопки."""
+    _, text, pngs, short = await build_weather(place, days, header)
+    if user_id is not None:
+        last_places.set(user_id, place)
+    await send_album(m, text, pngs, forecast_markup(days, place), short)
+
+
+async def refresh_weather(msg: Message, place: Place, days: int, user_id: int) -> bool:
+    """Перерисовать прогноз в тех же сообщениях. False — не получилось (старое сообщение и т. п.)."""
+    ids = album_ids.get((msg.chat.id, msg.message_id))
+    data, text, pngs, short = await build_weather(place, days)
+    last_places.set(user_id, place)
+    stamp = (data.get("current") or {}).get("time", "")[11:16]
+    stamp = f"\n<i>обновлено в {stamp} по местному времени</i>" if stamp else ""
+    markup = forecast_markup(days, place)
+    if not pngs and not ids:  # прогноз без картинок: всё в одном сообщении
+        await msg.edit_text(text + stamp, reply_markup=markup)
+        return True
+    if not pngs or not ids or len(ids) != len(pngs):
+        return False
+    for mid, media in zip(ids, _album_media(text, pngs)):
+        await msg.bot.edit_message_media(media=media, chat_id=msg.chat.id, message_id=mid)
+    await msg.edit_text((short if len(text) <= 1024 else text) + stamp, reply_markup=markup)
+    return True
 
 
 async def send_day(m: Message, place: Place, day: date, user_id: int):
@@ -576,17 +613,31 @@ def schedule_markup(place: Place) -> InlineKeyboardMarkup:
     ])
 
 
+def fmt_label(sub: dict) -> str:
+    return "кратко" if sub.get("short") else "полно"
+
+
+def sub_created_markup(sub: dict) -> InlineKeyboardMarkup:
+    other = "🖼 Присылать полностью" if sub.get("short") else "📄 Присылать кратко"
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=other, callback_data=f"su:fmt1:{sub['id']}"),
+        InlineKeyboardButton(text="🔔 Мои рассылки", callback_data="su:list")]])
+
+
 def subs_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     items = subs.list(user_id)
-    rows = [[InlineKeyboardButton(text=f"❌ {i}. {s['name']} — {describe_sched(s['sched'])}"[:60],
-                                  callback_data=f"su:rm:{s['id']}")] for i, s in enumerate(items, 1)]
+    rows = [[InlineKeyboardButton(text=f"❌ {i}. {s['name']} — {describe_sched(s['sched'])}"[:50],
+                                  callback_data=f"su:rm:{s['id']}"),
+             InlineKeyboardButton(text="🖼 Полно" if s.get("short") else "📄 Кратко",
+                                  callback_data=f"su:fmt:{s['id']}")] for i, s in enumerate(items, 1)]
     rows.append([InlineKeyboardButton(text="➕ Новая рассылка", callback_data="su:new")])
     if not items:
         return ("🔔 Рассылок пока нет. Бот может сам присылать погоду каждый час, раз в сутки или в "
                 "выбранное время.", InlineKeyboardMarkup(inline_keyboard=rows))
-    lines = [f"{i}. {escape(s['name'])} — {describe_sched(s['sched'])}, следующая {local_time(datetime.fromisoformat(s['next']), s['tz'])}"
+    lines = [f"{i}. {escape(s['name'])} — {describe_sched(s['sched'])}, {fmt_label(s)}, следующая "
+             f"{local_time(datetime.fromisoformat(s['next']), s['tz'])}"
              for i, s in enumerate(items, 1)]
-    return "🔔 Ваши рассылки (нажмите ❌, чтобы отключить):\n" + "\n".join(lines), \
+    return "🔔 Ваши рассылки (❌ — отключить, 📄/🖼 — краткий или полный формат):\n" + "\n".join(lines), \
         InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -596,33 +647,33 @@ async def ask_schedule(m: Message, place: Place):
                    reply_markup=schedule_markup(place))
 
 
-async def create_sub(m: Message, user_id: int, place: Place, sched: dict):
+async def create_sub(m: Message, user_id: int, place: Place, sched: dict, short: bool = False):
     try:
         tz = await client.timezone(place)
     except Exception:
         logging.exception("timezone error")
         await m.answer("Не удалось узнать часовой пояс места, попробуйте чуть позже 🙏")
         return
-    sub = subs.add(user_id, place, sched, tz, datetime.now(timezone.utc))
+    sub = subs.add(user_id, place, sched, tz, datetime.now(timezone.utc), short=short)
     if not sub:
         await m.answer(f"У вас уже {SUB_LIMIT} рассылок — отключите лишнюю в /subs")
         return
-    await m.answer(f"✅ Рассылка включена: {escape(place.name)} — {describe_sched(sched)}.\n"
+    await m.answer(f"✅ Рассылка включена: {escape(place.name)} — {describe_sched(sched)}, {fmt_label(sub)}.\n"
                    f"Следующая: {local_time(datetime.fromisoformat(sub['next']), tz)} ({tz}).\n"
-                   "Управление — /subs", reply_markup=keyboard)
+                   "Управление — /subs", reply_markup=sub_created_markup(sub))
 
 
 @router.message(Command("subscribe"))
 async def subscribe_cmd(m: Message, command: CommandObject):
     uid = m.from_user.id
     waiting.pop(uid, None)
-    args = (command.args or "").strip()
+    args, short = split_short(command.args)
     coords = parse_coords(args)
     query, sched = (args, None) if coords and not coords[2] else split_place_schedule(args)
 
     async def subscribe(target: Message, place: Place):
         if sched:
-            await create_sub(target, uid, place, sched)
+            await create_sub(target, uid, place, sched, short)
         else:
             await ask_schedule(target, place)
 
@@ -720,8 +771,24 @@ async def on_subs_button(cb: CallbackQuery):
         else:
             await ask_schedule(cb.message, place)
         return
-    removed = subs.remove(uid, int(action[3:])) if action.startswith("rm:") and action[3:].isdigit() else None
-    await cb.answer("🔕 Рассылка отключена" if removed else "Уже отключена")
+    kind, _, sub_id = action.partition(":")
+    if kind in ("fmt", "fmt1"):
+        sub = subs.toggle_short(uid, int(sub_id)) if sub_id.isdigit() else None
+        if not sub:
+            await cb.answer("Рассылка уже отключена", show_alert=True)
+            return
+        await cb.answer("Теперь кратко: три строки без графиков" if sub.get("short") else "Теперь полностью, с графиками")
+        if kind == "fmt1":  # кнопка под сообщением «Рассылка включена»
+            try:
+                await cb.message.edit_reply_markup(reply_markup=sub_created_markup(sub))
+            except Exception:
+                pass
+            return
+    elif kind == "rm":
+        removed = subs.remove(uid, int(sub_id)) if sub_id.isdigit() else None
+        await cb.answer("🔕 Рассылка отключена" if removed else "Уже отключена")
+    else:
+        await cb.answer()
     text, markup = subs_view(uid)
     try:
         await cb.message.edit_text(text, reply_markup=markup)
@@ -734,7 +801,14 @@ async def scheduler(bot: Bot, every: float = 30):
     logging.info("scheduler started: %d subscriptions", sum(len(v) for v in subs._data.values()))
 
     async def send(uid: int, sub: dict):
-        await send_weather(ChatTarget(bot, uid), Subscriptions.place(sub), 1,
+        place = Subscriptions.place(sub)
+        if sub.get("short"):
+            data = await client.fetch(place, 1)
+            more = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                text="📊 Подробно", callback_data=build_cb(1, place.lat, place.lon))]])
+            await bot.send_message(uid, "🔔 " + format_short(escape(place.name), data), reply_markup=more)
+            return
+        await send_weather(ChatTarget(bot, uid), place, 1,
                            header=f"🔔 <b>Рассылка:</b> {describe_sched(sub['sched'])}\n")
 
     while True:
@@ -874,6 +948,30 @@ async def btn_week(m: Message):
 @router.message(F.text == BTN_HELP)
 async def btn_help(m: Message):
     await help_cmd(m)
+
+
+@router.callback_query(F.data.startswith("r:"))
+async def on_refresh_button(cb: CallbackQuery):
+    """«🔄 Обновить»: тот же прогноз в тех же сообщениях, без нового сообщения."""
+    parsed = parse_cb("w" + cb.data[1:])
+    if not parsed or not isinstance(cb.message, Message):
+        await cb.answer("Кнопка устарела, запросите прогноз заново", show_alert=True)
+        return
+    days, lat, lon = parsed
+    place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
+    try:
+        done = await refresh_weather(cb.message, place, days, cb.from_user.id)
+    except Exception as e:
+        if "message is not modified" in str(e):
+            await cb.answer("Уже актуально")
+            return
+        logging.exception("refresh error")
+        done = False
+    if done:
+        await cb.answer("🔄 Обновлено")
+        return
+    await cb.answer()
+    await reply_for_place(cb.message, place, days, cb.from_user.id)
 
 
 @router.callback_query(F.data.startswith("w:"))

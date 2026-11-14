@@ -37,6 +37,16 @@ def parse_schedule(text: str | None) -> dict | None:
     return {"times": sorted(set(times))}
 
 
+SHORT_WORDS = {"кратко", "коротко", "кратко.", "short"}
+
+
+def split_short(args: str | None) -> tuple[str, bool]:
+    """«Бахмач 3ч кратко» → ("Бахмач 3ч", True): слово «кратко» в любом месте включает краткий формат."""
+    tokens = (args or "").split()
+    rest = [t for t in tokens if t.lower() not in SHORT_WORDS]
+    return " ".join(rest), len(rest) != len(tokens)
+
+
 def split_place_schedule(args: str | None) -> tuple[str, dict | None]:
     """«Бахмач 3ч» → ("Бахмач", {"hours": 3}); «Бахмач» → ("Бахмач", None); «08:00» → ("", {...})."""
     tokens = (args or "").split()
@@ -78,7 +88,10 @@ def local_time(dt: datetime, tz: str) -> str:
 
 
 class Subscriptions:
-    """user_id → список {id, name, lat, lon, sched, tz, next}; хранится в JSON-файле."""
+    """user_id → список {id, name, lat, lon, sched, tz, next, short}; хранится в JSON-файле.
+
+    short=True — краткий формат (три строки без графиков); у старых записей поля нет, это «полный».
+    """
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -103,7 +116,8 @@ class Subscriptions:
     def list(self, user_id: int) -> list[dict]:
         return list(self._data.get(str(user_id), []))
 
-    def add(self, user_id: int, place: Place, sched: dict, tz: str, now: datetime) -> dict | None:
+    def add(self, user_id: int, place: Place, sched: dict, tz: str, now: datetime,
+            short: bool = False) -> dict | None:
         """Новая рассылка; None, если уже SUB_LIMIT. Та же точка + то же расписание — заменяется."""
         items = self._data.setdefault(str(user_id), [])
         items[:] = [s for s in items if not (s["sched"] == sched and round(s["lat"], 3) == round(place.lat, 3)
@@ -112,7 +126,7 @@ class Subscriptions:
             return None
         sub = {"id": max((s["id"] for s in items), default=0) + 1, "name": place.name,
                "lat": place.lat, "lon": place.lon, "sched": sched, "tz": tz,
-               "next": next_run(sched, now, tz).isoformat()}
+               "next": next_run(sched, now, tz).isoformat(), "short": short}
         items.append(sub)
         self._save()
         return sub
@@ -122,6 +136,15 @@ class Subscriptions:
         for i, s in enumerate(items):
             if s["id"] == sub_id:
                 items.pop(i)
+                self._save()
+                return s
+        return None
+
+    def toggle_short(self, user_id: int, sub_id: int) -> dict | None:
+        """Переключить формат рассылки полный ↔ краткий; возвращает рассылку или None."""
+        for s in self._data.get(str(user_id), []):
+            if s["id"] == sub_id:
+                s["short"] = not s.get("short", False)
                 self._save()
                 return s
         return None

@@ -135,3 +135,20 @@ def test_callback_data_fits():
     for cb in [f"sh:12:{-89.9999:.3f}:{-179.9999:.3f}", f"st:2030:{-89.9999:.3f}:{-179.9999:.3f}",
                f"sb:{-89.9999:.3f}:{-179.9999:.3f}", "su:rm:99999"]:
         assert len(cb.encode()) <= 64
+
+
+def test_split_short():
+    from subs import split_short
+    assert split_short("Бахмач 3ч кратко") == ("Бахмач 3ч", True)
+    assert split_short("Кратко Бахмач") == ("Бахмач", True)
+    assert split_short("Бахмач 08:00") == ("Бахмач 08:00", False)
+    assert split_short(None) == ("", False)
+
+
+def test_short_flag_and_toggle(tmp_path):
+    s = Subscriptions(tmp_path / "s.json")
+    sub = s.add(1, P, {"hours": 3}, "Europe/Kyiv", NOW, short=True)
+    assert sub["short"] is True
+    assert s.toggle_short(1, sub["id"])["short"] is False
+    assert Subscriptions(tmp_path / "s.json").list(1)[0]["short"] is False  # сохранилось в файл
+    assert s.toggle_short(1, 99) is None
