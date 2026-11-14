@@ -1,4 +1,8 @@
 """Рассылка погоды по расписанию: каждые N часов или ежедневно в ЧЧ:ММ (по часовому поясу места)."""
+# аннотации не вычисляются при определении класса: метод Subscriptions.list иначе
+# перекрывает встроенный list в Python ≤ 3.13
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
