@@ -203,3 +203,28 @@ def wind_humidity_chart(name: str, data: dict, days: int = 1, hours: int = 24,
         ah.xaxis.set_major_locator(mdates.HourLocator(interval=3))
         ah.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
     return _png(fig)
+
+
+COMPARE_COLORS = ["#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#f08c00", "#0c8599", "#c2255c", "#5f3dc4",
+                  "#495057", "#66a80f"]
+
+
+def compare_chart(series: list[tuple[str, list[str], list, list]], days: int = 7) -> bytes:
+    """Несколько мест на одних осях: [(название, даты ISO, макс., мин.)] — сплошная линия днём,
+    пунктир той же краской ночью."""
+    fig, ax = plt.subplots(figsize=(9, 4.6))
+    labels = []
+    for k, (name, times, tmax, tmin) in enumerate(series):
+        color = COMPARE_COLORS[k % len(COMPARE_COLORS)]
+        xs = list(range(min(days, len(times))))
+        hi, lo = _clean(tmax[:len(xs)]), _clean(tmin[:len(xs)])
+        ax.plot(xs, hi, color=color, lw=2.3, marker="o", ms=4, label=name)
+        ax.plot(xs, lo, color=color, lw=1.4, ls="--", alpha=0.8)
+        if len(times) > len(labels):
+            labels = [f"{DAYS_RU[datetime.fromisoformat(t).weekday()]}\n{datetime.fromisoformat(t):%d.%m}"
+                      for t in times[:len(xs)]]
+    ax.set_xticks(list(range(len(labels))), labels)
+    ax.set_ylabel("Температура, °C")
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), frameon=False, fontsize=9)
+    _style(ax, "Мои места: днём (линия) и ночью (пунктир)")
+    return _png(fig)

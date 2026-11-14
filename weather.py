@@ -39,10 +39,10 @@ class WeatherClient:
 
     retry_delays = (1.0, 3.0)  # повторы при временных сбоях Open-Meteo (5xx, таймаут, обрыв связи)
 
-    async def _get(self, url: str, params: dict) -> dict:
+    async def _get(self, url: str, params: dict, timeout: float = 10) -> dict:
         for attempt in range(len(self.retry_delays) + 1):
             try:
-                async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
                     r.raise_for_status()
                     return await r.json()
             except (aiohttp.ClientResponseError, aiohttp.ClientConnectionError, asyncio.TimeoutError) as e:
@@ -93,6 +93,22 @@ class WeatherClient:
             "past_days": 1,
         })
         return split_yesterday(data)
+
+    async def fetch_air(self, place: Place) -> dict:
+        """Качество воздуха и пыльца: current + почасовой индекс EAQI на 2 суток."""
+        from air import AIR_URL, CURRENT
+
+        return await self._get(AIR_URL, {"latitude": place.lat, "longitude": place.lon, "current": CURRENT,
+                                         "hourly": "european_aqi", "forecast_days": 2, "timezone": "auto"})
+
+    async def fetch_climate(self, lat: float, lon: float, from_year: int, to_year: int) -> dict:
+        """Суточный архив за годы from_year…to_year (для климатической нормы)."""
+        data = await self._get(ARCHIVE_URL, {
+            "latitude": lat, "longitude": lon, "timezone": "auto",
+            "start_date": f"{from_year}-01-01", "end_date": f"{to_year}-12-31",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+        }, timeout=60)
+        return data.get("daily") or {}
 
     async def timezone(self, place: Place) -> str:
         """Часовой пояс места (IANA, например Europe/Kyiv) по данным Open-Meteo."""

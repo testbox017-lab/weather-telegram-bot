@@ -17,9 +17,10 @@ from aiogram.types import (BotCommand, BufferedInputFile, CallbackQuery, InlineK
                            InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
 
+from air import format_air
 from alerts import ALERT_LIMIT, CHECK_EVERY, KINDS, Alerts, check_all
 from astro import astro_text
-from charts import daily_chart, hourly_chart, wind_humidity_chart
+from charts import compare_chart, daily_chart, hourly_chart, wind_humidity_chart
 from dates import (build_cal_cb, build_date_cb, calendar_days, date_source, parse_cal_cb, parse_date,
                    parse_date_cb, source_error, split_date_args)
 from places import (DEFAULT_NAME, FAV_LIMIT, Favorites, LastPlaces, build_cb, coords_name, parse_cb,
@@ -28,8 +29,10 @@ from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, condition_met, describe a
                   describe_cond, local_time, parse_schedule, run_due, split_condition, split_place_schedule,
                   split_short)
 import health
+from normals import Normals, norm_text
 from weather import (ARCHIVE_URL, DAYS_RU, FORECAST_URL, GEO_URL, Place, WeatherClient, format_day,
                      format_forecast, format_hourly, format_short)
+from weekend import compare_text, format_weekend
 
 router = Router()
 client: WeatherClient  # создаётся в main()
@@ -52,6 +55,7 @@ last_places = LastPlaces(DATA_DIR / "last_places.json")
 saved = Favorites(DATA_DIR / "saved_places.json")
 subs = Subscriptions(DATA_DIR / "subscriptions.json")
 alerts = Alerts(DATA_DIR / "alerts.json")
+normals = Normals(DATA_DIR / "normals.json")
 waiting: dict[int, tuple[str, Place | None]] = {}  # ждём от пользователя место ("add") или дату ("date")
 PlaceAction = Callable[[Message, Place], Awaitable[None]]
 choices: dict[int, tuple[int, list[Place], PlaceAction]] = {}  # выбор среди одноимённых городов
@@ -117,6 +121,11 @@ HELP = (
     f"{BTN_ALERTS} или /alerts — бот сам напишет, если ожидается заморозок, гроза, порывы ветра от 15 м/с, "
     "жара, сильный мороз, резкий перепад температуры или осадки через 1–2 часа (ночью с 23 до 7 молчит). "
     f"До {ALERT_LIMIT} мест, каждое предупреждение включается отдельно\n\n"
+    "Ещё:\n"
+    "• /air [город] или 🌫 Воздух под прогнозом — качество воздуха (индекс EAQI, PM2.5, PM10) и пыльца\n"
+    "• /weekend [город] или 🏖 Выходные — прогноз на ближайшие субботу и воскресенье с советом\n"
+    "• /compare или 📊 Сравнить в «Моих местах» — все места в одном сообщении и на одном графике\n"
+    "• В сводке на сегодня и на дату есть строка 📈 «как обычно в этот день» — норма за 1991–2020\n\n"
     f"{BTN_PING} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
 )
 
@@ -139,6 +148,8 @@ def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="📆 Другая дата", callback_data=build_cal_cb("f", place.lat, place.lon))],
         [InlineKeyboardButton(text="⏱ По часам", callback_data=f"hr:{place.lat:.3f}:{place.lon:.3f}"),
          InlineKeyboardButton(text="🔔 Подписаться", callback_data=f"sb:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text="🌫 Воздух", callback_data=f"aq:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")],
         [InlineKeyboardButton(text="⚠️ Предупреждения", callback_data=f"al:new:{place.lat:.3f}:{place.lon:.3f}")],
     ])
 
@@ -186,6 +197,8 @@ def places_view(user_id: int, deleting: bool = False) -> tuple[str, InlineKeyboa
     actions = [InlineKeyboardButton(text="➕ Добавить", callback_data="pl:add")]
     if items:
         actions.append(InlineKeyboardButton(text="🗑 Удалить", callback_data="pl:del"))
+    if len(items) >= 2:
+        actions.append(InlineKeyboardButton(text="📊 Сравнить", callback_data="pl:cmp"))
     rows.append(actions)
     if items:
         text = "⭐ Мои места:\n" + "\n".join(f"{i}. {fmt_place(p)}" for i, p in enumerate(items, 1))
@@ -245,11 +258,43 @@ async def send_album(m: Message, text: str, pngs: list[bytes] | None, markup, sh
         pass
 
 
+_norm_tasks: dict[str, asyncio.Task] = {}
+
+
+async def norm_line(place: Place, day: date | None, daily: dict, wait: float = 6) -> str | None:
+    """Строка «как обычно в этот день». Первый расчёт для места долгий (архив за 30 лет):
+    ждём не дольше wait секунд, дальше расчёт докачивается в фоне и пригодится в следующий раз."""
+    if day is None:
+        return None
+    norm = normals.cached(place.lat, place.lon)
+    if norm is None:
+        from normals import place_key
+
+        key = place_key(place.lat, place.lon)
+        task = _norm_tasks.get(key)
+        if task is None or task.done():
+            task = _norm_tasks[key] = asyncio.create_task(normals.load(client, place.lat, place.lon))
+        try:
+            norm = await asyncio.wait_for(asyncio.shield(task), wait)
+        except asyncio.TimeoutError:
+            return None
+        except Exception:
+            logging.exception("normals error")
+            return None
+    tmax, tmin = (daily.get("temperature_2m_max") or [None])[0], (daily.get("temperature_2m_min") or [None])[0]
+    return norm_text(norm, day, tmax, tmin)
+
+
 async def build_weather(place: Place, days: int, header: str = "", data: dict | None = None):
     """Данные для ответа: (data, текст, картинки или None, короткая подпись для сообщения с кнопками)."""
     if data is None:
         data = await client.fetch(place, days)
     text = header + format_forecast(place.name, data, days)
+    if days == 1:
+        line = await norm_line(place, date.fromisoformat(data["daily"]["time"][0]) if data.get("daily") else None,
+                               data.get("daily") or {})
+        if line:
+            text += "\n" + line
     try:
         text += "\n\n" + astro_text(place.lat, place.lon, data)
     except Exception:
@@ -306,6 +351,9 @@ async def send_day(m: Message, place: Place, day: date, user_id: int):
         return
     last_places.set(user_id, place)
     text = format_day(place.name, data, day, archive)
+    line = await norm_line(place, day, data.get("daily") or {})
+    if line:
+        text += "\n" + line
     try:
         text += "\n\n" + astro_text(place.lat, place.lon, data, next_phases_line=False)
     except Exception:
@@ -482,6 +530,10 @@ async def on_places_button(cb: CallbackQuery):
     if action == "add":
         await cb.answer()
         await ask_place(cb.message, uid)
+        return
+    if action == "cmp":
+        await cb.answer()
+        await send_compare(cb.message, uid)
         return
     if action.startswith("rm:"):
         removed = saved.remove(uid, int(action[3:])) if action[3:].isdigit() else None
@@ -1065,6 +1117,114 @@ async def on_ping_button(cb: CallbackQuery):
     await run_ping(cb.message, cb.from_user.id, edit=True)
 
 
+# ---------- Воздух, выходные, сравнение мест ----------
+
+async def for_city(m: Message, query: str, action: PlaceAction):
+    """Город из команды или, если его нет, последнее место пользователя."""
+    query = (query or "").strip()
+    if query:
+        await with_place(m, m.from_user.id, query, action)
+        return
+    place = last_places.get(m.from_user.id)
+    if not place:
+        await m.answer(NO_PLACE, reply_markup=keyboard)
+        return
+    await action(m, place)
+
+
+def back_markup(place: Place) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🌤 Сейчас", callback_data=build_cb(1, place.lat, place.lon)),
+        InlineKeyboardButton(text="📅 Неделя", callback_data=build_cb(7, place.lat, place.lon))]])
+
+
+async def send_air(m: Message, place: Place):
+    try:
+        data = await client.fetch_air(place)
+    except Exception:
+        logging.exception("air error")
+        await m.answer("Не удалось получить данные о воздухе, попробуйте чуть позже 🙏")
+        return
+    await m.answer(format_air(escape(place.name), data), reply_markup=back_markup(place))
+
+
+async def send_weekend(m: Message, place: Place):
+    try:
+        data = await client.fetch(place, 7)
+    except Exception:
+        logging.exception("weekend error")
+        await m.answer("Не удалось получить прогноз, попробуйте чуть позже 🙏")
+        return
+    await m.answer(format_weekend(escape(place.name), data), reply_markup=back_markup(place))
+
+
+async def send_compare(m: Message, user_id: int):
+    items = saved.list(user_id)
+    if len(items) < 2:
+        await m.answer("Для сравнения нужно хотя бы два места в «⭐ Мои места» — добавьте их через /add",
+                       reply_markup=open_places_markup())
+        return
+
+    async def one(p: Place):
+        try:
+            return await client.fetch(p, 7)
+        except Exception:
+            logging.exception("compare fetch error")
+            return None
+
+    results = await asyncio.gather(*(one(p) for p in items))
+    text = compare_text([(escape(p.name), d) for p, d in zip(items, results)])
+    series = [(p.name, d["daily"]["time"], d["daily"]["temperature_2m_max"], d["daily"]["temperature_2m_min"])
+              for p, d in zip(items, results) if d and d.get("daily")]
+    png = None
+    if series:
+        try:
+            png = await asyncio.to_thread(compare_chart, series)
+        except Exception:
+            logging.exception("compare chart error")
+    markup = open_places_markup()
+    if png and len(text) <= 1024:
+        await m.answer_photo(BufferedInputFile(png, filename="compare.png"), caption=text, reply_markup=markup)
+        return
+    await m.answer(text, reply_markup=markup)
+    if png:
+        await m.answer_photo(BufferedInputFile(png, filename="compare.png"))
+
+
+@router.message(Command("air"))
+async def air_cmd(m: Message, command: CommandObject):
+    waiting.pop(m.from_user.id, None)
+    await for_city(m, command.args, send_air)
+
+
+@router.message(Command("weekend"))
+async def weekend_cmd(m: Message, command: CommandObject):
+    waiting.pop(m.from_user.id, None)
+    await for_city(m, command.args, send_weekend)
+
+
+@router.message(Command("compare"))
+async def compare_cmd(m: Message):
+    waiting.pop(m.from_user.id, None)
+    await send_compare(m, m.from_user.id)
+
+
+@router.callback_query(F.data.regexp(r"^(aq|we):"))
+async def on_air_weekend_button(cb: CallbackQuery):
+    try:
+        kind, lat, lon = cb.data.split(":")
+        lat, lon = float(lat), float(lon)
+    except ValueError:
+        await cb.answer("Кнопка устарела", show_alert=True)
+        return
+    if not isinstance(cb.message, Message):
+        await cb.answer("Сообщение устарело, запросите прогноз заново", show_alert=True)
+        return
+    await cb.answer()
+    place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
+    await (send_air if kind == "aq" else send_weekend)(cb.message, place)
+
+
 # ---------- Общие кнопки и ввод ----------
 
 @router.message(Command("week"))
@@ -1219,6 +1379,9 @@ async def main():
             BotCommand(command="subs", description="Мои рассылки"),
             BotCommand(command="unsubscribe", description="Отключить рассылку: /unsubscribe номер|all"),
             BotCommand(command="alerts", description="Предупреждения: заморозок, гроза, ветер"),
+            BotCommand(command="air", description="Качество воздуха и пыльца: /air Город"),
+            BotCommand(command="weekend", description="Погода на выходные: /weekend Город"),
+            BotCommand(command="compare", description="Сравнить мои места"),
             BotCommand(command="ping", description="Проверить связь с сервером"),
             BotCommand(command="help", description="Справка"),
         ])
