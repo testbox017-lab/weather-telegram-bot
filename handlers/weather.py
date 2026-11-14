@@ -17,6 +17,7 @@ from core import (BTN_HELP, BTN_NOW, BTN_WEEK, HELP, back_markup, choices, drop_
                   refresh_weather, reply_for_last, reply_for_place, with_place)
 from places import build_cb, parse_cb
 from weather import Place, format_hourly
+from table import format_table
 from weekend import format_weekend
 
 router = Router(name="weather")
@@ -124,6 +125,21 @@ async def send_weekend(m: Message, place: Place):
 
 
 
+async def send_table(m: Message, place: Place):
+    try:
+        data = await core.client.fetch(place, 4)  # ночь третьего дня — уже четвёртые сутки
+    except Exception:
+        logging.exception("table error")
+        await m.answer("Не удалось получить прогноз, попробуйте чуть позже 🙏")
+        return
+    await m.answer(format_table(escape(place.name), data), reply_markup=back_markup(place))
+
+
+@router.message(Command("table"))
+async def table_cmd(m: Message, command: CommandObject):
+    await for_city(m, command.args, send_table)
+
+
 @router.message(Command("air"))
 async def air_cmd(m: Message, command: CommandObject):
     await for_city(m, command.args, send_air)
@@ -135,7 +151,7 @@ async def weekend_cmd(m: Message, command: CommandObject):
 
 
 
-@router.callback_query(F.data.regexp(r"^(aq|we):"))
+@router.callback_query(F.data.regexp(r"^(aq|we|tb):"))
 async def on_air_weekend_button(cb: CallbackQuery):
     try:
         kind, lat, lon = cb.data.split(":")
@@ -148,7 +164,7 @@ async def on_air_weekend_button(cb: CallbackQuery):
         return
     await cb.answer()
     place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
-    await (send_air if kind == "aq" else send_weekend)(cb.message, place)
+    await {"aq": send_air, "we": send_weekend, "tb": send_table}[kind](cb.message, place)
 
 
 # ---------- Общие кнопки и ввод ----------

@@ -117,6 +117,7 @@ HELP = (
     "Ещё:\n"
     "• /air [город] или 🌫 Воздух под прогнозом — качество воздуха (индекс EAQI, PM2.5, PM10) и пыльца\n"
     "• /weekend [город] или 🏖 Выходные — прогноз на ближайшие субботу и воскресенье с советом\n"
+    "• /table [город] или 📋 Таблица — 3 дня текстом: утро, день, вечер и ночь\n"
     "• /compare или 📊 Сравнить в «Моих местах» — все места в одном сообщении и на одном графике\n"
     "• В сводке на сегодня и на дату есть строка 📈 «как обычно в этот день» — норма за 1991–2020\n\n"
     f"{BTN_SETTINGS} или /settings — модель прогноза (Авто, ECMWF, ICON, GFS) и источник качества воздуха "
@@ -223,7 +224,8 @@ def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")]
         if prefs.current()["air"] != "off" else  # качество воздуха выключено в /settings
         [InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")],
-        [InlineKeyboardButton(text="⚠️ Предупреждения", callback_data=f"al:new:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text="📋 Таблица", callback_data=f"tb:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text="⚠️ Предупреждения", callback_data=f"al:new:{place.lat:.3f}:{place.lon:.3f}")],
     ])
 
 

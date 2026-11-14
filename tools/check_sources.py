@@ -24,6 +24,8 @@ from core import render_charts  # noqa: E402
 from handlers.dates import render_day_charts  # noqa: E402
 from prefs import MODELS  # noqa: E402
 from weather import Place, WeatherClient, format_day, format_forecast, format_hourly, format_short  # noqa: E402
+from advice import dew_tips  # noqa: E402
+from table import format_table  # noqa: E402
 from weekend import compare_text, format_weekend  # noqa: E402
 
 
@@ -65,6 +67,8 @@ async def main():
                     ("charts 1", lambda: render_charts("X", d1, 1)),
                     ("charts 7", lambda: render_charts("X", d7, 7)),
                     ("weekend", lambda: format_weekend("X", d7)),
+                    ("table", lambda: format_table("X", d7)),
+                    ("dew_tips", lambda: dew_tips(d1)),
                     ("compare", lambda: compare_text([("X", d7), ("Y", d1)])),
                     ("alerts.detect", lambda: detect(d1)),
                     ("advice", lambda: [is_wet(h) for h in upcoming(d1, 12)]),
@@ -85,6 +89,8 @@ async def main():
                     traceback.print_exc(limit=3)
             if steps:
                 print("  --- сводка ---\n  " + format_forecast("X", d1, 1).replace("\n", "\n  "))
+                if model == "best_match":
+                    print("  --- таблица ---\n  " + format_table("X", d7).replace("\n", "\n  "))
 
         print("\n=== air ===")
         try:

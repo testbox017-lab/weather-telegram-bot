@@ -1,4 +1,4 @@
-from advice import clothing, upcoming
+from advice import clothing, dew_tips, upcoming
 from weather import format_forecast, format_hourly
 
 
@@ -65,3 +65,34 @@ def test_hourly_text():
 
 def test_hourly_no_data():
     assert "Нет почасовых данных" in format_hourly("X", {"current": {}})
+
+
+def with_dew(d, dew, temp=None):
+    if temp is not None:
+        d["current"]["temperature_2m"] = temp
+        d["hourly"]["temperature_2m"] = [temp] * len(d["hourly"]["time"])
+    d["current"]["dew_point_2m"] = dew
+    return d
+
+
+def test_dew_muggy():
+    assert dew_tips(with_dew(make(feels=28), 19, temp=29)) == ["😓 Душно: точка росы 19°"]
+    assert "Очень душно" in dew_tips(with_dew(make(feels=30), 22, temp=31))[0]
+    assert dew_tips(with_dew(make(feels=20), 10, temp=22)) == []
+
+
+def test_dew_fog_and_ice():
+    tips = dew_tips(with_dew(make(feels=-2, wind=1), -0.5, temp=0))
+    assert any("туман" in t for t in tips) and any("гололёд" in t for t in tips)
+    rain = with_dew(make(feels=-1, wind=5, prec=wet_at(18)), -6, temp=1)
+    rain["hourly"]["temperature_2m"] = [1.0] * 20 + [-1.0] * 28  # к вечеру дождь и минус
+    assert [t for t in dew_tips(rain) if "гололёд" in t]
+    rain["hourly"]["temperature_2m"] = [1.0] * 48  # дождь, но выше нуля — без гололёда
+    assert not [t for t in dew_tips(rain) if "гололёд" in t]
+    assert dew_tips(with_dew(make(feels=-10, wind=5), -15, temp=-8)) == []  # мороз и сухо
+
+
+def test_dew_in_summary():
+    text = format_forecast("X", with_dew(make(feels=3), 1.4))
+    assert "Влажность: 70%, точка росы 1°" in text
+    assert "точка росы" not in format_forecast("X", make(feels=3))  # модель без точки росы

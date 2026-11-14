@@ -64,3 +64,26 @@ def clothing(data: dict) -> str | None:
         extra.append("крем от солнца и очки")
     text = ", ".join([base] + extra)
     return f"👕 {text[0].upper()}{text[1:]}"
+
+
+def dew_tips(data: dict) -> list[str]:
+    """Советы по точке росы: духота, туман, гололёд. Пусто, если ничего примечательного."""
+    cur = data.get("current") or {}
+    t, dew = cur.get("temperature_2m"), cur.get("dew_point_2m")
+    if t is None or dew is None:
+        return []
+    tips = []
+    if dew >= 21:
+        tips.append(f"🥵 Очень душно: точка росы {round(dew)}°")
+    elif dew >= 18:
+        tips.append(f"😓 Душно: точка росы {round(dew)}°")
+    hours = upcoming(data, 12)
+    wind = cur.get("wind_speed_10m") or 0
+    if t - dew <= 1 and wind < 3 and cur.get("weather_code") not in (45, 48):
+        tips.append("🌫 Воздух почти насыщен влагой — возможен туман")
+    temps = [h["temp"] for h in hours if h["temp"] is not None] + [t]
+    cold = min(temps) <= 0 and max(temps) <= 3
+    wet = any(is_wet(h) for h in hours) or (cur.get("precipitation") or 0) >= 0.1
+    if cold and (wet or t - dew <= 1):
+        tips.append("🧊 Около нуля и влажно — возможен гололёд, осторожно на дорогах и тротуарах")
+    return tips
