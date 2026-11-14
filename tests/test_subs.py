@@ -152,3 +152,52 @@ def test_short_flag_and_toggle(tmp_path):
     assert s.toggle_short(1, sub["id"])["short"] is False
     assert Subscriptions(tmp_path / "s.json").list(1)[0]["short"] is False  # сохранилось в файл
     assert s.toggle_short(1, 99) is None
+
+
+def test_weekdays_schedule():
+    assert parse_schedule("по будням 07:30") == {"times": ["07:30"], "days": [0, 1, 2, 3, 4]}
+    assert parse_schedule("сб вс 10:00") == {"times": ["10:00"], "days": [5, 6]}
+    assert parse_schedule("по пятницам 18:00") == {"times": ["18:00"], "days": [4]}
+    assert parse_schedule("пн ср пт 08:00, 20:00") == {"times": ["08:00", "20:00"], "days": [0, 2, 4]}
+    assert parse_schedule("будни 3ч") is None  # дни — только для времени
+    assert split_place_schedule("Бахмач по будням 07:30") == ("Бахмач", {"times": ["07:30"],
+                                                                          "days": [0, 1, 2, 3, 4]})
+    assert describe({"times": ["07:30"], "days": [0, 1, 2, 3, 4]}) == "по будням в 07:30"
+    assert describe({"times": ["10:00"], "days": [5, 6]}) == "по выходным в 10:00"
+    assert describe({"times": ["10:00"], "days": [0, 3]}) == "по пн, чт в 10:00"
+
+
+def test_next_run_skips_weekend():
+    fri_evening = datetime(2026, 11, 13, 18, 0, tzinfo=UTC)  # пятница, 20:00 в Киеве
+    run = next_run({"times": ["07:30"], "days": [0, 1, 2, 3, 4]}, fri_evening, "Europe/Kyiv")
+    assert run == datetime(2026, 11, 16, 5, 30, tzinfo=UTC)  # понедельник 07:30 по Киеву
+
+
+def test_conditions():
+    from subs import condition_met, describe_cond, parse_condition, split_condition
+    assert split_condition("Бахмач 07:00 если дождь") == ("Бахмач 07:00", "precip", True)
+    assert split_condition("Бахмач 07:00") == ("Бахмач 07:00", None, False)
+    assert split_condition("Бахмач 07:00 если луна")[1:] == (None, True)
+    assert parse_condition("снег") == "snow"
+    assert parse_condition("ниже -5") == "below:-5"
+    assert parse_condition("выше 25°") == "above:25"
+    assert parse_condition("мороз") == "frost"
+    assert describe_cond("below:-5") == "если ниже -5°" and describe_cond("above:25") == "если выше +25°"
+
+    hours = [f"2026-11-14T{h:02d}:00" for h in range(24)]
+    dry = {"current": {"time": "2026-11-14T06:40"},
+           "hourly": {"time": hours, "temperature_2m": [3.0] * 24, "precipitation": [0.0] * 24,
+                      "precipitation_probability": [10] * 24, "weather_code": [3] * 24}}
+    wet = {**dry, "hourly": {**dry["hourly"], "precipitation": [0.0] * 12 + [1.0] + [0.0] * 11}}
+    assert not condition_met("precip", dry) and condition_met("precip", wet)
+    assert condition_met(None, dry)
+    assert condition_met("below:5", dry) and not condition_met("below:0", dry)
+    assert not condition_met("frost", dry) and not condition_met("snow", wet)
+
+
+@pytest.mark.asyncio
+async def test_condition_stored_and_distinct(tmp_path):
+    s = Subscriptions(tmp_path / "s.json")
+    a = s.add(1, P, {"times": ["07:00"]}, "Europe/Kyiv", NOW, cond="precip")
+    b = s.add(1, P, {"times": ["07:00"]}, "Europe/Kyiv", NOW)
+    assert a["cond"] == "precip" and "cond" not in b and len(s.list(1)) == 2

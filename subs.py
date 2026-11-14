@@ -20,11 +20,48 @@ _TIME_RE = re.compile(r"([01]?\d|2[0-3])[:.]([0-5]\d)")
 _HOURS_RE = re.compile(r"^(?:каждые?\s*)?(\d{1,2})\s*(?:ч|час|часа|часов|h)?$")
 
 
+DAY_NAMES = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+_DAY_WORDS = {
+    "будни": [0, 1, 2, 3, 4], "будням": [0, 1, 2, 3, 4], "будние": [0, 1, 2, 3, 4],
+    "выходные": [5, 6], "выходным": [5, 6],
+    "понедельник": [0], "понедельникам": [0], "вторник": [1], "вторникам": [1],
+    "среда": [2], "среду": [2], "средам": [2], "четверг": [3], "четвергам": [3],
+    "пятница": [4], "пятницу": [4], "пятницам": [4], "суббота": [5], "субботу": [5], "субботам": [5],
+    "воскресенье": [6], "воскресеньям": [6],
+    **{d: [i] for i, d in enumerate(DAY_NAMES)},
+}
+_FILLER = {"по", "в", "во", "и", "дни", "день"}
+
+
+def _take_days(t: str) -> tuple[str, list[int] | None]:
+    """Вынуть из текста дни недели: «по будням 07:30» → ("07:30", [0..4])."""
+    days, rest, found = set(), [], False
+    for tok in re.split(r"[\s,;]+", t):
+        if tok in _DAY_WORDS:
+            days.update(_DAY_WORDS[tok])
+            found = True
+        elif tok not in _FILLER or not found:
+            rest.append(tok)
+    if not found:
+        return t, None
+    rest = [x for x in rest if x not in _FILLER]
+    return " ".join(rest), sorted(days)
+
+
 def parse_schedule(text: str | None) -> dict | None:
-    """«3», «3ч», «каждые 6 ч» → {"hours": 3}; «08:00», «7.30, 19:00» → {"times": [...]}; иначе None."""
+    """«3», «3ч», «каждые 6 ч» → {"hours": 3}; «08:00», «7.30, 19:00» → {"times": [...]}; иначе None.
+
+    Ежедневное время можно ограничить днями недели: «по будням 07:30», «сб вс 10:00» → {"times", "days"}.
+    """
     t = (text or "").strip().lower()
     if not t:
         return None
+    t, days = _take_days(t)
+    if days is not None:
+        sched = parse_schedule(t)
+        if not sched or "times" not in sched or len(days) == 7:
+            return sched if sched and len(days) == 7 and "times" in sched else None
+        return {**sched, "days": days}
     m = _HOURS_RE.match(t)
     if m:
         h = int(m.group(1))
@@ -47,6 +84,71 @@ def split_short(args: str | None) -> tuple[str, bool]:
     return " ".join(rest), len(rest) != len(tokens)
 
 
+_COND_RE = re.compile(r"(?:^|\s)если\s+(.+)$")
+_NUM_RE = re.compile(r"([-−+]?\d{1,2})")
+
+
+def parse_condition(text: str) -> str | None:
+    """«дождь» → "precip", «снег» → "snow", «мороз» → "frost", «ниже -5» → "below:-5", «выше 25» → "above:25"."""
+    t = text.strip().lower().replace("°", " ").replace("c", " ").replace("с ", " ")
+    m = _NUM_RE.search(t)
+    num = int(m.group(1).replace("−", "-")) if m else None
+    if num is not None and any(w in t for w in ("ниже", "холоднее", "меньше", "<")):
+        return f"below:{num}"
+    if num is not None and any(w in t for w in ("выше", "теплее", "больше", ">", "жара")):
+        return f"above:{num}"
+    if "снег" in t:
+        return "snow"
+    if any(w in t for w in ("дожд", "осадк", "ливен", "гроз")):
+        return "precip"
+    if any(w in t for w in ("мороз", "заморо", "минус")):
+        return "frost"
+    return None
+
+
+def split_condition(args: str | None) -> tuple[str, str | None, bool]:
+    """«Бахмач 07:00 если дождь» → ("Бахмач 07:00", "precip", True). Третье — было ли слово «если»."""
+    a = args or ""
+    m = _COND_RE.search(a.lower())
+    if not m:
+        return a.strip(), None, False
+    return a[:m.start()].strip(), parse_condition(m.group(1)), True
+
+
+def describe_cond(cond: str | None) -> str:
+    if not cond:
+        return ""
+    kind, _, value = cond.partition(":")
+    if kind in ("below", "above"):
+        n = int(value)
+        sign = "+" if n > 0 else ""
+        return f"если {'ниже' if kind == 'below' else 'выше'} {sign}{n}°"
+    return {"precip": "если будут осадки", "snow": "если будет снег", "frost": "если будет мороз"}.get(kind, "")
+
+
+def condition_met(cond: str | None, data: dict) -> bool:
+    """Выполнено ли условие рассылки по прогнозу на ближайшие 12 часов (мороз — 24 часа)."""
+    if not cond:
+        return True
+    from advice import is_wet, upcoming
+
+    kind, _, value = cond.partition(":")
+    hours = upcoming(data, 24 if kind == "frost" else 12)
+    temps = [h["temp"] for h in hours if h["temp"] is not None]
+    if kind == "precip":
+        rain = ((data.get("daily") or {}).get("precipitation_sum") or [0])[0] or 0
+        return any(is_wet(h) for h in hours) or rain >= 0.5
+    if kind == "snow":
+        return any(is_wet(h) and h["code"] in {71, 73, 75, 77, 85, 86} for h in hours)
+    if kind == "frost":
+        return bool(temps) and min(temps) <= 0
+    if kind == "below":
+        return bool(temps) and min(temps) <= int(value)
+    if kind == "above":
+        return bool(temps) and max(temps) >= int(value)
+    return True
+
+
 def split_place_schedule(args: str | None) -> tuple[str, dict | None]:
     """«Бахмач 3ч» → ("Бахмач", {"hours": 3}); «Бахмач» → ("Бахмач", None); «08:00» → ("", {...})."""
     tokens = (args or "").split()
@@ -65,7 +167,10 @@ def next_run(sched: dict, now: datetime, tz: str = "UTC") -> datetime:
     zone = ZoneInfo(tz)
     local = now.astimezone(zone)
     candidates = []
-    for day in (local.date(), local.date() + timedelta(days=1)):
+    days = set(sched.get("days") or range(7))
+    for day in (local.date() + timedelta(days=k) for k in range(8)):
+        if day.weekday() not in days:
+            continue
         for t in sched["times"]:
             h, mi = map(int, t.split(":"))
             # локальное «настенное» время → UTC через zoneinfo (корректно при переходе на летнее время)
@@ -75,9 +180,19 @@ def next_run(sched: dict, now: datetime, tz: str = "UTC") -> datetime:
     return min(candidates)
 
 
+def describe_days(days: list[int] | None) -> str:
+    if not days or len(days) == 7:
+        return "ежедневно"
+    if days == [0, 1, 2, 3, 4]:
+        return "по будням"
+    if days == [5, 6]:
+        return "по выходным"
+    return "по " + ", ".join(DAY_NAMES[d] for d in days)
+
+
 def describe(sched: dict) -> str:
     if "times" in sched:
-        return "ежедневно в " + ", ".join(sched["times"])
+        return describe_days(sched.get("days")) + " в " + ", ".join(sched["times"])
     h = int(sched["hours"])
     return {1: "каждый час", 24: "раз в сутки"}.get(h, f"каждые {h} ч")
 
@@ -117,16 +232,19 @@ class Subscriptions:
         return list(self._data.get(str(user_id), []))
 
     def add(self, user_id: int, place: Place, sched: dict, tz: str, now: datetime,
-            short: bool = False) -> dict | None:
+            short: bool = False, cond: str | None = None) -> dict | None:
         """Новая рассылка; None, если уже SUB_LIMIT. Та же точка + то же расписание — заменяется."""
         items = self._data.setdefault(str(user_id), [])
-        items[:] = [s for s in items if not (s["sched"] == sched and round(s["lat"], 3) == round(place.lat, 3)
+        items[:] = [s for s in items if not (s["sched"] == sched and s.get("cond") == cond
+                                            and round(s["lat"], 3) == round(place.lat, 3)
                                             and round(s["lon"], 3) == round(place.lon, 3))]
         if len(items) >= SUB_LIMIT:
             return None
         sub = {"id": max((s["id"] for s in items), default=0) + 1, "name": place.name,
                "lat": place.lat, "lon": place.lon, "sched": sched, "tz": tz,
                "next": next_run(sched, now, tz).isoformat(), "short": short}
+        if cond:
+            sub["cond"] = cond
         items.append(sub)
         self._save()
         return sub

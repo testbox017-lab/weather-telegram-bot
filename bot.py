@@ -24,8 +24,9 @@ from dates import (build_cal_cb, build_date_cb, calendar_days, date_source, pars
                    parse_date_cb, source_error, split_date_args)
 from places import (DEFAULT_NAME, FAV_LIMIT, Favorites, LastPlaces, build_cb, coords_name, parse_cb,
                     parse_coords)
-from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, describe as describe_sched, local_time,
-                  parse_schedule, run_due, split_place_schedule, split_short)
+from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, condition_met, describe as describe_sched,
+                  describe_cond, local_time, parse_schedule, run_due, split_condition, split_place_schedule,
+                  split_short)
 import health
 from weather import (ARCHIVE_URL, DAYS_RU, FORECAST_URL, GEO_URL, Place, WeatherClient, format_day,
                      format_forecast, format_hourly, format_short)
@@ -108,6 +109,9 @@ HELP = (
     "• /subscribe [город] — выбрать периодичность: каждый 1/3/6/12 ч, раз в сутки или в своё время\n"
     "• /subscribe <i>Бахмач 3ч</i> или <i>Бахмач 08:00, 20:00</i> — сразу\n"
     "• добавьте <i>кратко</i> — три строки без графиков (переключается и в /subs)\n"
+    "• дни недели: <i>Бахмач по будням 07:30</i>, <i>сб вс 10:00</i>\n"
+    "• условие: <i>Бахмач 07:00 если дождь</i> (снег, мороз, ниже -5, выше 25) — "
+    "без осадков рассылка в этот день не придёт\n"
     "• /subs — ваши рассылки, /unsubscribe <i>номер</i> или <i>all</i> — отключить\n"
     "• 🔔 Подписаться — кнопка под прогнозом\n\n"
     f"{BTN_ALERTS} или /alerts — бот сам напишет, если ожидается заморозок, гроза, порывы ветра от 15 м/с, "
@@ -241,9 +245,10 @@ async def send_album(m: Message, text: str, pngs: list[bytes] | None, markup, sh
         pass
 
 
-async def build_weather(place: Place, days: int, header: str = ""):
+async def build_weather(place: Place, days: int, header: str = "", data: dict | None = None):
     """Данные для ответа: (data, текст, картинки или None, короткая подпись для сообщения с кнопками)."""
-    data = await client.fetch(place, days)
+    if data is None:
+        data = await client.fetch(place, days)
     text = header + format_forecast(place.name, data, days)
     try:
         text += "\n\n" + astro_text(place.lat, place.lon, data)
@@ -258,9 +263,10 @@ async def build_weather(place: Place, days: int, header: str = ""):
     return data, text, pngs, f"📍 {escape(place.name)} — прогноз {period}"
 
 
-async def send_weather(m, place: Place, days: int, user_id: int | None = None, header: str = ""):
+async def send_weather(m, place: Place, days: int, user_id: int | None = None, header: str = "",
+                       data: dict | None = None):
     """Текст прогноза (+ солнце и луна), альбом из двух графиков и inline-кнопки."""
-    _, text, pngs, short = await build_weather(place, days, header)
+    _, text, pngs, short = await build_weather(place, days, header, data)
     if user_id is not None:
         last_places.set(user_id, place)
     await send_album(m, text, pngs, forecast_markup(days, place), short)
@@ -627,6 +633,12 @@ def fmt_label(sub: dict) -> str:
     return "кратко" if sub.get("short") else "полно"
 
 
+def sub_text(sub: dict) -> str:
+    """«по будням в 07:30, если будут осадки, кратко»."""
+    parts = [describe_sched(sub["sched"]), describe_cond(sub.get("cond")), fmt_label(sub)]
+    return ", ".join(p for p in parts if p)
+
+
 def sub_created_markup(sub: dict) -> InlineKeyboardMarkup:
     other = "🖼 Присылать полностью" if sub.get("short") else "📄 Присылать кратко"
     return InlineKeyboardMarkup(inline_keyboard=[[
@@ -644,7 +656,7 @@ def subs_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     if not items:
         return ("🔔 Рассылок пока нет. Бот может сам присылать погоду каждый час, раз в сутки или в "
                 "выбранное время.", InlineKeyboardMarkup(inline_keyboard=rows))
-    lines = [f"{i}. {escape(s['name'])} — {describe_sched(s['sched'])}, {fmt_label(s)}, следующая "
+    lines = [f"{i}. {escape(s['name'])} — {sub_text(s)}, следующая "
              f"{local_time(datetime.fromisoformat(s['next']), s['tz'])}"
              for i, s in enumerate(items, 1)]
     return "🔔 Ваши рассылки (❌ — отключить, 📄/🖼 — краткий или полный формат):\n" + "\n".join(lines), \
@@ -657,18 +669,19 @@ async def ask_schedule(m: Message, place: Place):
                    reply_markup=schedule_markup(place))
 
 
-async def create_sub(m: Message, user_id: int, place: Place, sched: dict, short: bool = False):
+async def create_sub(m: Message, user_id: int, place: Place, sched: dict, short: bool = False,
+                     cond: str | None = None):
     try:
         tz = await client.timezone(place)
     except Exception:
         logging.exception("timezone error")
         await m.answer("Не удалось узнать часовой пояс места, попробуйте чуть позже 🙏")
         return
-    sub = subs.add(user_id, place, sched, tz, datetime.now(timezone.utc), short=short)
+    sub = subs.add(user_id, place, sched, tz, datetime.now(timezone.utc), short=short, cond=cond)
     if not sub:
         await m.answer(f"У вас уже {SUB_LIMIT} рассылок — отключите лишнюю в /subs")
         return
-    await m.answer(f"✅ Рассылка включена: {escape(place.name)} — {describe_sched(sched)}, {fmt_label(sub)}.\n"
+    await m.answer(f"✅ Рассылка включена: {escape(place.name)} — {sub_text(sub)}.\n"
                    f"Следующая: {local_time(datetime.fromisoformat(sub['next']), tz)} ({tz}).\n"
                    "Управление — /subs", reply_markup=sub_created_markup(sub))
 
@@ -678,12 +691,21 @@ async def subscribe_cmd(m: Message, command: CommandObject):
     uid = m.from_user.id
     waiting.pop(uid, None)
     args, short = split_short(command.args)
+    args, cond, has_if = split_condition(args)
+    if has_if and not cond:
+        await m.answer("Не понял условие. Примеры: <code>если дождь</code>, <code>если снег</code>, "
+                       "<code>если мороз</code>, <code>если ниже -5</code>, <code>если выше 25</code>")
+        return
     coords = parse_coords(args)
     query, sched = (args, None) if coords and not coords[2] else split_place_schedule(args)
+    if cond and not sched:
+        await m.answer("Для рассылки с условием укажите и время, например: "
+                       "<code>/subscribe Бахмач 07:00 если дождь</code>")
+        return
 
     async def subscribe(target: Message, place: Place):
         if sched:
-            await create_sub(target, uid, place, sched, short)
+            await create_sub(target, uid, place, sched, short, cond)
         else:
             await ask_schedule(target, place)
 
@@ -812,14 +834,17 @@ async def scheduler(bot: Bot, every: float = 30):
 
     async def send(uid: int, sub: dict):
         place = Subscriptions.place(sub)
+        data = await client.fetch(place, 1)
+        if not condition_met(sub.get("cond"), data):
+            logging.info("subscription %s/%s skipped: condition %s not met", uid, sub["id"], sub.get("cond"))
+            return
         if sub.get("short"):
-            data = await client.fetch(place, 1)
             more = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
                 text="📊 Подробно", callback_data=build_cb(1, place.lat, place.lon))]])
             await bot.send_message(uid, "🔔 " + format_short(escape(place.name), data), reply_markup=more)
             return
         await send_weather(ChatTarget(bot, uid), place, 1,
-                           header=f"🔔 <b>Рассылка:</b> {describe_sched(sub['sched'])}\n")
+                           header=f"🔔 <b>Рассылка:</b> {sub_text(sub)}\n", data=data)
 
     while True:
         health.mark_tick()
