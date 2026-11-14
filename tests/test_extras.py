@@ -37,6 +37,13 @@ def test_format_air_pollen_and_worse_ahead():
     assert "ухудшится до «плохой»" in text and "18:00" in text
 
 
+def test_worse_tomorrow_says_tomorrow():
+    d = air_data(european_aqi=30)
+    d["current"]["time"] = "2026-11-14T20:15"
+    d["hourly"] = {"time": ["2026-11-14T20:00", "2026-11-15T19:00"], "european_aqi": [30, 55]}
+    assert "ухудшится до «умеренный» 🟡 завтра около 19:00" in air.format_air("Киев", d)
+
+
 def test_format_air_no_data():
     assert "Нет данных" in air.format_air("X", {"current": {}})
 
@@ -162,3 +169,27 @@ def test_bot_norm_line_and_compare(tmp_path, monkeypatch):
     m = Msg()
     asyncio.run(places_router.send_compare(m, 1))
     assert m.sent[0][0] == "photo" and "Теплее всего сейчас: B" in m.sent[0][1]
+
+
+def test_weekend_saturday_evening_shows_sunday():
+    d = week(date(2026, 11, 14))  # суббота
+    d["current"] = {"time": "2026-11-14T20:17"}
+    text = weekend.format_weekend("Киев", d)
+    assert "Сегодня уже вечер — показываю завтра" in text
+    assert "Суббота" not in text and "Воскресенье, 15.11" in text
+
+
+def test_weekend_sunday_evening_shows_next_weekend():
+    d = week(date(2026, 11, 15))  # воскресенье
+    d["daily"] = {k: v + v[:2] for k, v in d["daily"].items()}
+    d["daily"]["time"] = [(date(2026, 11, 15) + timedelta(days=i)).isoformat() for i in range(9)]
+    d["current"] = {"time": "2026-11-15T19:00"}
+    text = weekend.format_weekend("Киев", d)
+    assert "следующие выходные" in text and "Суббота, 21.11" in text and "Воскресенье, 22.11" in text
+
+
+def test_weekend_saturday_morning_unchanged():
+    d = week(date(2026, 11, 14))
+    d["current"] = {"time": "2026-11-14T09:00"}
+    text = weekend.format_weekend("Киев", d)
+    assert "Суббота, сегодня" in text and "вечер" not in text

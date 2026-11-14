@@ -16,6 +16,7 @@ from weather import Place
 INTERVALS = (1, 3, 6, 12, 24)   # допустимые интервалы, часов
 MAX_TIMES = 3                    # не больше 3 времён в день
 SUB_LIMIT = 5                    # не больше 5 рассылок на пользователя
+QUIET_FROM, QUIET_TO = 23, 7     # рассылки «каждые N ч» ночью не приходят (по местному времени места)
 _TIME_RE = re.compile(r"([01]?\d|2[0-3])[:.]([0-5]\d)")
 _HOURS_RE = re.compile(r"^(?:каждые?\s*)?(\d{1,2})\s*(?:ч|час|часа|часов|h)?$")
 
@@ -162,9 +163,13 @@ def split_place_schedule(args: str | None) -> tuple[str, dict | None]:
 def next_run(sched: dict, now: datetime, tz: str = "UTC") -> datetime:
     """Следующее время отправки (aware, UTC). now — aware datetime."""
     now = now.astimezone(timezone.utc)
-    if "hours" in sched:
-        return now + timedelta(hours=int(sched["hours"]))
     zone = ZoneInfo(tz)
+    if "hours" in sched:
+        run = (now + timedelta(hours=int(sched["hours"]))).astimezone(zone)
+        if is_quiet(run):  # ночью не будим: переносим на утро
+            day = run.date() if run.hour < QUIET_TO else run.date() + timedelta(days=1)
+            run = datetime(day.year, day.month, day.day, QUIET_TO, 0, tzinfo=zone)
+        return run.astimezone(timezone.utc)
     local = now.astimezone(zone)
     candidates = []
     days = set(sched.get("days") or range(7))
@@ -178,6 +183,15 @@ def next_run(sched: dict, now: datetime, tz: str = "UTC") -> datetime:
             if run > now:
                 candidates.append(run)
     return min(candidates)
+
+
+def is_quiet(local: datetime) -> bool:
+    return local.hour >= QUIET_FROM or local.hour < QUIET_TO
+
+
+def quiet_now(sub: dict, now: datetime) -> bool:
+    """Рассылка «каждые N ч», а у места сейчас ночь (старые записи могли запланировать отправку на ночь)."""
+    return "hours" in sub["sched"] and is_quiet(now.astimezone(ZoneInfo(sub.get("tz", "UTC"))))
 
 
 def describe_days(days: list[int] | None) -> str:
@@ -281,11 +295,13 @@ class Subscriptions:
         return [(int(uid), s) for uid, items in self._data.items() for s in items
                 if datetime.fromisoformat(s["next"]) <= now]
 
-    def advance(self, user_id: int, sub_id: int, now: datetime) -> None:
-        """Следующая отправка от текущего момента: пропущенное за время простоя досылается один раз."""
+    def advance(self, user_id: int, sub_id: int, now: datetime, morning: bool = False) -> None:
+        """Следующая отправка от текущего момента: пропущенное за время простоя досылается один раз.
+        morning=True — ночью рассылку пропустили, следующая утром в QUIET_TO."""
         for s in self._data.get(str(user_id), []):
             if s["id"] == sub_id:
-                s["next"] = next_run(s["sched"], now, s.get("tz", "UTC")).isoformat()
+                sched = {"hours": 0} if morning else s["sched"]
+                s["next"] = next_run(sched, now, s.get("tz", "UTC")).isoformat()
                 self._save()
 
     @staticmethod
@@ -301,6 +317,9 @@ async def run_due(subs: Subscriptions, now: datetime, send, blocked_exc: tuple =
     """
     sent = 0
     for uid, sub in subs.due(now):
+        if quiet_now(sub, now):  # ночь — не отправляем, переносим на утро
+            subs.advance(uid, sub["id"], now, morning=True)
+            continue
         try:
             await send(uid, sub)
             sent += 1

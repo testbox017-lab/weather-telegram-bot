@@ -142,8 +142,34 @@ class ResetInputMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         state = data.get("state")
         if state is not None and not get_flag(data, "keep_input"):
+            if await state.get_state() is not None:
+                await drop_prompt(data.get("bot"), event.chat.id, state)
             await state.clear()
         return await handler(event, data)
+
+
+async def send_prompt(m: Message, state, text: str) -> None:
+    """Вопрос с кнопкой «✖️ Отмена»; прежний вопрос теряет свою кнопку, чтобы в чате не висели старые «Отмена»."""
+    await drop_prompt(m.bot, m.chat.id, state)
+    sent = await m.answer(text, reply_markup=cancel_markup())
+    await state.update_data(prompt=sent.message_id)
+
+
+async def drop_prompt(bot: Bot | None, chat_id: int, state) -> None:
+    """Убрать кнопку «Отмена» у последнего вопроса (ввод получен, отменён или задан заново)."""
+    prompt = (await state.get_data()).get("prompt")
+    if not prompt or bot is None:
+        return
+    await state.update_data(prompt=None)
+    try:
+        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=prompt, reply_markup=None)
+    except Exception:  # сообщение удалено или уже без кнопок
+        pass
+
+
+def short_name(name: str) -> str:
+    """«Бахмач, Черниговская область, Украина» → «Бахмач» (для кнопок и легенд)."""
+    return name.split(",")[0].strip() or name
 
 
 def place_data(place: Place) -> dict:

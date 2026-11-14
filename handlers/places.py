@@ -10,8 +10,8 @@ from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton
 
 import core
 from charts import compare_chart
-from core import (ASK_PLACE, BTN_PLACES, INPUT_TEXT, KEEP_INPUT, Input, cancel_markup, fmt_place,
-                  open_places_markup, place_name, saved, with_place)
+from core import (ASK_PLACE, BTN_PLACES, INPUT_TEXT, KEEP_INPUT, Input, drop_prompt, fmt_place,
+                  open_places_markup, place_name, saved, send_prompt, short_name, with_place)
 from places import DEFAULT_NAME, FAV_LIMIT, build_cb, coords_name, parse_coords
 from weather import Place
 from weekend import compare_text
@@ -22,7 +22,7 @@ router = Router(name="places")
 def places_view(user_id: int, deleting: bool = False) -> tuple[str, InlineKeyboardMarkup]:
     items = saved.list(user_id)
     if deleting:
-        rows = [[InlineKeyboardButton(text=f"❌ {p.name}"[:60], callback_data=f"pl:rm:{i}")]
+        rows = [[InlineKeyboardButton(text=f"❌ {p.name}"[:60], callback_data=f"pl:ask:{i}")]
                 for i, p in enumerate(items)]
         rows.append([InlineKeyboardButton(text="↩️ Готово", callback_data="pl:list")])
         return "Нажмите место, которое нужно удалить:", InlineKeyboardMarkup(inline_keyboard=rows)
@@ -57,20 +57,22 @@ async def save_place(m: Message, user_id: int, place: Place):
 
 async def ask_place(m: Message, state: FSMContext):
     await state.set_state(Input.place)
-    await m.answer(ASK_PLACE, reply_markup=cancel_markup())
+    await send_prompt(m, state, ASK_PLACE)
 
 
 @router.message(Input.place, INPUT_TEXT, flags=KEEP_INPUT)
 async def place_input(m: Message, state: FSMContext):
     """Ответ на «Отправьте название города…»: город или координаты."""
     uid = m.from_user.id
-    await state.clear()
-    if not await with_place(m, uid, m.text, lambda target, place: save_place(target, uid, place)):
-        await state.set_state(Input.place)  # не нашлось — даём попробовать ещё раз
+    if await with_place(m, uid, m.text, lambda target, place: save_place(target, uid, place)):
+        await drop_prompt(m.bot, m.chat.id, state)
+        await state.clear()
+    # не нашлось — ожидание остаётся, можно попробовать ещё раз
 
 
 @router.message(Input.place, F.location, flags=KEEP_INPUT)
 async def place_location(m: Message, state: FSMContext):
+    await drop_prompt(m.bot, m.chat.id, state)
     await state.clear()
     loc = m.location
     await save_place(m, m.from_user.id, Place(coords_name(loc.latitude, loc.longitude), loc.latitude, loc.longitude))
@@ -134,6 +136,22 @@ async def on_places_button(cb: CallbackQuery, state: FSMContext):
         await cb.answer()
         await send_compare(cb.message, uid)
         return
+    if action.startswith("ask:"):  # первый шаг удаления — переспросить
+        items = saved.list(uid)
+        i = int(action[4:]) if action[4:].isdigit() else -1
+        if not 0 <= i < len(items):
+            await cb.answer("Уже удалено")
+        else:
+            await cb.answer()
+            confirm = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🗑 Да, удалить", callback_data=f"pl:rm:{i}"),
+                InlineKeyboardButton(text="↩️ Нет", callback_data="pl:del")]])
+            try:
+                await cb.message.edit_text(f"Удалить «{escape(items[i].name)}» из ваших мест?", reply_markup=confirm)
+                return
+            except Exception:
+                pass
+        action = "del"
     if action.startswith("rm:"):
         removed = saved.remove(uid, int(action[3:])) if action[3:].isdigit() else None
         await cb.answer(f"Удалено: {removed.name}" if removed else "Уже удалено")
@@ -181,7 +199,7 @@ async def send_compare(m: Message, user_id: int):
 
     results = await asyncio.gather(*(one(p) for p in items))
     text = compare_text([(escape(p.name), d) for p, d in zip(items, results)])
-    series = [(p.name, d["daily"]["time"], d["daily"]["temperature_2m_max"], d["daily"]["temperature_2m_min"])
+    series = [(short_name(p.name), d["daily"]["time"], d["daily"]["temperature_2m_max"], d["daily"]["temperature_2m_min"])
               for p, d in zip(items, results) if d and d.get("daily")]
     png = None
     if series:

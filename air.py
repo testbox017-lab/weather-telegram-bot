@@ -43,7 +43,7 @@ def pollen_level(var: str, value: float) -> str | None:
 
 
 def worst_ahead(data: dict, hours: int = 24) -> tuple[float, str] | None:
-    """Максимум EAQI в ближайшие часы: (значение, время ЧЧ:ММ)."""
+    """Максимум EAQI в ближайшие часы: (значение, «около ЧЧ:ММ» или «завтра около ЧЧ:ММ»)."""
     h = data.get("hourly") or {}
     times, vals = h.get("time") or [], h.get("european_aqi") or []
     now = (data.get("current") or {}).get("time", "")[:13]
@@ -51,7 +51,8 @@ def worst_ahead(data: dict, hours: int = 24) -> tuple[float, str] | None:
     if not pairs:
         return None
     v, t = max(pairs, key=lambda p: p[0])
-    return v, t[11:16]
+    when = f"около {t[11:16]}"
+    return v, (when if t[:10] == now[:10] else "завтра " + when)
 
 
 def format_air(name: str, data: dict) -> str:
@@ -71,7 +72,7 @@ def format_air(name: str, data: dict) -> str:
     ahead = worst_ahead(data)
     if ahead and aqi_level(ahead[0])[1] != word and ahead[0] > aqi:
         e2, w2 = aqi_level(ahead[0])
-        lines.append(f"⏳ В ближайшие сутки ухудшится до «{w2}» {e2} около {ahead[1]}")
+        lines.append(f"⏳ В ближайшие сутки ухудшится до «{w2}» {e2} {ahead[1]}")
     tip = AQI_ADVICE.get(word)
     if tip:
         lines.append(f"💡 {tip}")
