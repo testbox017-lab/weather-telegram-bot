@@ -295,6 +295,11 @@ def format_forecast(name: str, data: dict, days: int = 1) -> str:
     outlook = rain_outlook(data)
     if outlook:
         lines.append(outlook)
+    from advice import clothing
+
+    tip = clothing(data)
+    if tip:
+        lines.append(tip)
     lines += [
         "",
         f"{describe(cur['weather_code'])}",
@@ -362,4 +367,26 @@ def format_short(name: str, data: dict) -> str:
     if tmin is not None and tmax is not None:
         prob = _first(d, "precipitation_probability_max")
         lines.append(f"Сегодня {round(tmin)}…{round(tmax)}°C" + (f", ☔️ {prob}%" if prob is not None else ""))
+    return "\n".join(lines)
+
+
+def format_hourly(name: str, data: dict, hours: int = 12) -> str:
+    """Ближайшие часы строками: «15:00 ☁️ +7°, ☔️ 40% 0.3 мм, 💨 3 м/с»."""
+    from advice import upcoming
+
+    rows = upcoming(data, hours)
+    if not rows:
+        return f"📍 <b>{name}</b>\nНет почасовых данных 🤷"
+    lines = [f"⏱ <b>{name}</b> — по часам", ""]
+    for h in rows:
+        emoji = WMO.get(h["code"], ("", "🌡"))[1] if h["code"] is not None else "🌡"
+        t = h["temp"]
+        line = f"{h['time'][11:16]} {emoji} {'+' if t is not None and round(t) > 0 else ''}{round(t) if t is not None else '?'}°"
+        if h["prob"] is not None:
+            line += f", ☔️ {h['prob']}%"
+        if (h["prec"] or 0) >= 0.1:
+            line += f" {h['prec']:.1f} мм"
+        if h["wind"] is not None:
+            line += f", 💨 {round(h['wind'])} м/с"
+        lines.append(line)
     return "\n".join(lines)

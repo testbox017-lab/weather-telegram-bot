@@ -27,7 +27,7 @@ from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, describe as describe_sche
                   parse_schedule, run_due, split_place_schedule, split_short)
 import health
 from weather import (ARCHIVE_URL, DAYS_RU, FORECAST_URL, GEO_URL, Place, WeatherClient, format_day,
-                     format_forecast, format_short)
+                     format_forecast, format_hourly, format_short)
 
 router = Router()
 client: WeatherClient  # создаётся в main()
@@ -86,7 +86,9 @@ HELP = (
     "Кнопки внизу:\n"
     f"• {BTN_GEO} — погода там, где вы сейчас\n"
     f"• {BTN_NOW} и {BTN_WEEK} — для последнего города или места\n"
-    "• Под прогнозом: 🔄 Обновить (перерисует тот же прогноз) и переключение сегодня/неделя\n"
+    "• Под прогнозом: 🔄 Обновить (перерисует тот же прогноз), переключение сегодня/неделя и ⏱ По часам — "
+    "12 часов текстом\n"
+    "• В сводке есть совет, что надеть 👕\n"
     "/weather и /week без города тоже показывают последнее место\n"
     "• Координаты текстом, например <code>51.18, 32.83</code>, — погода в этой точке\n"
     "• Если городов с таким названием несколько, предложу выбрать кнопками. Можно сразу уточнить "
@@ -125,7 +127,8 @@ def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text=other[1], callback_data=build_cb(other[0], place.lat, place.lon))],
         [InlineKeyboardButton(text="⭐ В мои места", callback_data=f"fa:{place.lat:.3f}:{place.lon:.3f}"),
          InlineKeyboardButton(text="📆 Другая дата", callback_data=build_cal_cb("f", place.lat, place.lon))],
-        [InlineKeyboardButton(text="🔔 Подписаться", callback_data=f"sb:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text="⏱ По часам", callback_data=f"hr:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text="🔔 Подписаться", callback_data=f"sb:{place.lat:.3f}:{place.lon:.3f}")],
     ])
 
 
@@ -948,6 +951,31 @@ async def btn_week(m: Message):
 @router.message(F.text == BTN_HELP)
 async def btn_help(m: Message):
     await help_cmd(m)
+
+
+@router.callback_query(F.data.startswith("hr:"))
+async def on_hourly_button(cb: CallbackQuery):
+    """«⏱ По часам»: ближайшие 12 часов текстом, без картинок."""
+    try:
+        _, lat, lon = cb.data.split(":")
+        lat, lon = float(lat), float(lon)
+    except ValueError:
+        await cb.answer("Кнопка устарела", show_alert=True)
+        return
+    if not isinstance(cb.message, Message):
+        await cb.answer("Сообщение устарело, запросите прогноз заново", show_alert=True)
+        return
+    await cb.answer()
+    place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
+    try:
+        data = await client.fetch(place, 1)
+    except Exception:
+        logging.exception("hourly error")
+        await cb.message.answer("Не удалось получить погоду, попробуйте чуть позже 🙏")
+        return
+    back = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+        text="🌤 Сейчас", callback_data=build_cb(1, lat, lon))]])
+    await cb.message.answer(format_hourly(escape(place.name), data), reply_markup=back)
 
 
 @router.callback_query(F.data.startswith("r:"))
