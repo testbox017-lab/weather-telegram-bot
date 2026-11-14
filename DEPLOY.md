@@ -75,7 +75,7 @@ chmod 600 .env     # читать файл может только владел�
 из PowerShell в папке бота (`<SERVER_IP>` — адрес вашего сервера):
 
 ```powershell
-tar -cf $env:TEMP\bot.tar --exclude __pycache__ *.py requirements.txt Dockerfile docker-compose.yml .dockerignore
+tar -cf $env:TEMP\bot.tar --exclude __pycache__ *.py handlers requirements.txt Dockerfile docker-compose.yml .dockerignore
 scp $env:TEMP\bot.tar root@<SERVER_IP>:/tmp/bot.tar
 ssh root@<SERVER_IP> "cd /opt/weather-bot && tar -xf /tmp/bot.tar && docker compose up -d --build"
 ```

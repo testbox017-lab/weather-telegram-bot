@@ -1,11 +1,12 @@
-"""Выбор среди одноимённых городов в bot.py (без Telegram: подменяем сообщения и геокодер)."""
+"""Выбор среди одноимённых городов (core.with_place и кнопка в роутере weather) (без Telegram: подменяем сообщения и геокодер)."""
 import os
 import tempfile
 
 import pytest
 
 os.environ.setdefault("DATA_DIR", tempfile.mkdtemp())
-import bot  # noqa: E402
+import core  # noqa: E402
+from handlers import weather as weather_router  # noqa: E402
 from weather import Place  # noqa: E402
 
 A, B = Place("Бахмач, Черниговская область, Украина", 51.18, 32.83), Place("Бахмач, Сумская область, Украина", 50.9, 34.1)
@@ -49,52 +50,52 @@ def chosen(monkeypatch):
     async def action(target, place):
         got.append(place)
 
-    monkeypatch.setattr(bot, "isinstance", lambda o, t: True, raising=False)  # FakeMessage вместо Message
+    monkeypatch.setattr(weather_router, "isinstance", lambda o, t: True, raising=False)  # FakeMessage вместо Message
     return got, action
 
 
 @pytest.mark.asyncio
 async def test_obvious_place_runs_at_once(monkeypatch, chosen):
     got, action = chosen
-    monkeypatch.setattr(bot, "client", FakeClient([A], True), raising=False)
+    monkeypatch.setattr(core, "client", FakeClient([A], True), raising=False)
     m = FakeMessage()
-    assert await bot.with_place(m, 42, "Бахмач", action)
+    assert await core.with_place(m, 42, "Бахмач", action)
     assert got == [A] and not m.sent
 
 
 @pytest.mark.asyncio
 async def test_coords_skip_geocoder(monkeypatch, chosen):
     got, action = chosen
-    monkeypatch.setattr(bot, "client", None, raising=False)
-    assert await bot.with_place(FakeMessage(), 42, "51.18, 32.83 Дача", action)
+    monkeypatch.setattr(core, "client", None, raising=False)
+    assert await core.with_place(FakeMessage(), 42, "51.18, 32.83 Дача", action)
     assert got == [Place("Дача", 51.18, 32.83)]
 
 
 @pytest.mark.asyncio
 async def test_not_found(monkeypatch, chosen):
     got, action = chosen
-    monkeypatch.setattr(bot, "client", FakeClient([], False), raising=False)
+    monkeypatch.setattr(core, "client", FakeClient([], False), raising=False)
     m = FakeMessage()
-    assert not await bot.with_place(m, 42, "Абырвалг", action)
+    assert not await core.with_place(m, 42, "Абырвалг", action)
     assert not got and "Не нашёл" in m.sent[0][0]
 
 
 @pytest.mark.asyncio
 async def test_choice_then_button(monkeypatch, chosen):
     got, action = chosen
-    monkeypatch.setattr(bot, "client", FakeClient([A, B], False), raising=False)
+    monkeypatch.setattr(core, "client", FakeClient([A, B], False), raising=False)
     m = FakeMessage()
-    assert await bot.with_place(m, 42, "Бахмач", action)
+    assert await core.with_place(m, 42, "Бахмач", action)
     assert not got
     text, markup = m.sent[0]
     buttons = [row[0] for row in markup.inline_keyboard]
     assert "несколько" in text and [b.text for b in buttons[:2]] == [f"📍 {A.name}", f"📍 {B.name}"]
 
-    await bot.on_choice_button(FakeCallback(buttons[1].callback_data, m))
+    await weather_router.on_choice_button(FakeCallback(buttons[1].callback_data, m))
     assert got == [B] and m.edited == [f"📍 {B.name}"]
 
     cb = FakeCallback(buttons[0].callback_data, m)  # повторное нажатие — список уже использован
-    await bot.on_choice_button(cb)
+    await weather_router.on_choice_button(cb)
     assert got == [B] and cb.alerts and "устарел" in cb.alerts[0]
 
 
@@ -126,10 +127,10 @@ async def test_refresh_edits_album_in_place(monkeypatch):
     async def fake_build(place, days, header=""):
         return {"current": {"time": "2026-11-14T15:45"}}, "прогноз", [b"png1", b"png2"], "📍 коротко"
 
-    monkeypatch.setattr(bot, "build_weather", fake_build)
+    monkeypatch.setattr(core, "build_weather", fake_build)
     msg = ButtonsMessage()
-    bot.album_ids[(7, 12)] = [10, 11]
-    assert await bot.refresh_weather(msg, A, 1, 42)
+    core.album_ids[(7, 12)] = [10, 11]
+    assert await core.refresh_weather(msg, A, 1, 42)
     assert [(c, m) for c, m, _ in msg.bot.edited_media] == [(7, 10), (7, 11)]
     assert msg.bot.edited_media[0][2] == "прогноз"
     assert msg.edited == ["📍 коротко\n<i>обновлено в 15:45 по местному времени</i>"]
@@ -142,5 +143,5 @@ async def test_refresh_unknown_message_falls_back(monkeypatch):
     async def fake_build(place, days, header=""):
         return {}, "прогноз", [b"png1", b"png2"], "коротко"
 
-    monkeypatch.setattr(bot, "build_weather", fake_build)
-    assert not await bot.refresh_weather(ButtonsMessage(99), A, 1, 42)
+    monkeypatch.setattr(core, "build_weather", fake_build)
+    assert not await core.refresh_weather(ButtonsMessage(99), A, 1, 42)

@@ -12,6 +12,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY *.py ./
+COPY handlers/ ./handlers/
 
 # Версия для /ping: GIT_COMMIT=$(git rev-parse --short HEAD) docker compose up -d --build
 ARG GIT_COMMIT=unknown
