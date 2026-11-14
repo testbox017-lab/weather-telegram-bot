@@ -1,5 +1,6 @@
 """Погодный Telegram-бот. Запуск: python bot.py (токен в .env)"""
 import asyncio
+import itertools
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -11,6 +12,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command, CommandObject, CommandStart
+from collections.abc import Awaitable, Callable
 from aiogram.types import (BotCommand, BufferedInputFile, CallbackQuery, InlineKeyboardButton,
                            InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
@@ -48,6 +50,9 @@ last_places = LastPlaces(DATA_DIR / "last_places.json")
 saved = Favorites(DATA_DIR / "saved_places.json")
 subs = Subscriptions(DATA_DIR / "subscriptions.json")
 waiting: dict[int, tuple[str, Place | None]] = {}  # ждём от пользователя место ("add") или дату ("date")
+PlaceAction = Callable[[Message, Place], Awaitable[None]]
+choices: dict[int, tuple[int, list[Place], PlaceAction]] = {}  # выбор среди одноимённых городов
+choice_ids = itertools.count(1)
 
 BTN_GEO = "📍 Моя геолокация"
 BTN_NOW = "🌤 Погода сейчас"
@@ -83,7 +88,9 @@ HELP = (
     f"• {BTN_NOW} и {BTN_WEEK} — для последнего города или места\n"
     "• Под прогнозом: 🔄 Обновить и переключение сегодня/неделя\n"
     "/weather и /week без города тоже показывают последнее место\n"
-    "• Координаты текстом, например <code>51.18, 32.83</code>, — погода в этой точке\n\n"
+    "• Координаты текстом, например <code>51.18, 32.83</code>, — погода в этой точке\n"
+    "• Если городов с таким названием несколько, предложу выбрать кнопками. Можно сразу уточнить "
+    "через запятую: <i>Бахмач, Черниговская</i> или <i>Париж, США</i>\n\n"
     f"{BTN_PLACES} — ваш список мест (до {FAV_LIMIT}):\n"
     "• /add <i>город</i> или /add <i>широта долгота [название]</i> — добавить\n"
     "• /places — список, нажмите место, чтобы узнать погоду\n"
@@ -275,21 +282,64 @@ async def reply_for_last(m: Message, days: int):
     await reply_for_place(m, place, days, m.from_user.id)
 
 
-async def resolve_place(m: Message, query: str) -> Place | None:
-    """Координаты или название города → Place (сообщает пользователю, если не нашлось)."""
+def choice_markup(choice_id: int, places: list[Place]) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=f"📍 {p.name}"[:64], callback_data=f"pk:{choice_id}:{i}")]
+            for i, p in enumerate(places)]
+    rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="x")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def with_place(m: Message, user_id: int, query: str, action: PlaceAction) -> bool:
+    """Координаты или название города → action(target, place).
+
+    Если одноимённых мест несколько, показывает кнопки и выполняет action после выбора.
+    Возвращает False, если место не нашлось (пользователю уже сказано).
+    """
+    query = query.strip()
     coords = parse_coords(query)
     if coords:
         lat, lon, name = coords
-        return Place(name or coords_name(lat, lon), lat, lon)
+        await action(m, Place(name or coords_name(lat, lon), lat, lon))
+        return True
     try:
-        place = await client.find_city(query)
+        places, obvious = await client.find_cities(query)
     except Exception:
         logging.exception("geocoding error")
         await m.answer("Не удалось найти место, попробуйте чуть позже 🙏")
-        return None
-    if not place:
+        return False
+    if not places:
         await m.answer(f"Не нашёл город «{escape(query)}» 🤷 Проверьте написание.")
-    return place
+        return False
+    if obvious:
+        await action(m, places[0])
+        return True
+    choice_id = next(choice_ids)
+    choices[user_id] = (choice_id, places, action)
+    await m.answer(f"🔎 Нашёл несколько мест «{escape(query)}». Какое нужно?",
+                   reply_markup=choice_markup(choice_id, places))
+    return True
+
+
+@router.callback_query(F.data.startswith("pk:"))
+async def on_choice_button(cb: CallbackQuery):
+    try:
+        _, choice_id, index = cb.data.split(":")
+        choice_id, index = int(choice_id), int(index)
+    except ValueError:
+        choice_id, index = 0, 0
+    pending = choices.get(cb.from_user.id)
+    if not pending or pending[0] != choice_id or not 0 <= index < len(pending[1]) \
+            or not isinstance(cb.message, Message):
+        await cb.answer("Этот список устарел — напишите название ещё раз", show_alert=True)
+        return
+    choices.pop(cb.from_user.id, None)
+    place, action = pending[1][index], pending[2]
+    await cb.answer()
+    try:
+        await cb.message.edit_text(f"📍 {escape(place.name)}")
+    except Exception:
+        pass
+    await action(cb.message, place)
 
 
 async def reply_for_city(m: Message, query: str, days: int):
@@ -297,9 +347,12 @@ async def reply_for_city(m: Message, query: str, days: int):
     if not query:
         await reply_for_last(m, days)
         return
-    place = await resolve_place(m, query)
-    if place:
-        await reply_for_place(m, place, days, m.from_user.id)
+    uid = m.from_user.id
+
+    async def show(target: Message, place: Place):
+        await reply_for_place(target, place, days, uid)
+
+    await with_place(m, uid, query, show)
 
 
 # ---------- Мои места ----------
@@ -333,9 +386,7 @@ async def add_cmd(m: Message, command: CommandObject):
         await m.answer("Не понял координаты. Пример: <code>/add 51.18 32.83 Дача</code> "
                        "(широта от -90 до 90, долгота от -180 до 180)")
         return
-    place = await resolve_place(m, query)
-    if place:
-        await save_place(m, uid, place)
+    await with_place(m, uid, query, lambda target, place: save_place(target, uid, place))
 
 
 @router.message(Command("places"))
@@ -412,6 +463,7 @@ async def on_save_button(cb: CallbackQuery):
 @router.callback_query(F.data == "x")
 async def on_cancel(cb: CallbackQuery):
     waiting.pop(cb.from_user.id, None)
+    choices.pop(cb.from_user.id, None)
     await cb.answer("Отменено")
     if isinstance(cb.message, Message):
         try:
@@ -443,14 +495,13 @@ async def date_cmd(m: Message, command: CommandObject):
                        "<code>/date завтра</code>, <code>/date вчера 51.18, 32.83</code>")
         return
     if query.strip():
-        place = await resolve_place(m, query.strip())
-    else:
-        place = last_places.get(uid)
-        if not place:
-            await m.answer(NO_PLACE, reply_markup=keyboard)
-            return
-    if place:
-        await send_day(m, place, day, uid)
+        await with_place(m, uid, query, lambda target, place: send_day(target, place, day, uid))
+        return
+    place = last_places.get(uid)
+    if not place:
+        await m.answer(NO_PLACE, reply_markup=keyboard)
+        return
+    await send_day(m, place, day, uid)
 
 
 @router.message(F.text == BTN_DATE)
@@ -568,19 +619,21 @@ async def subscribe_cmd(m: Message, command: CommandObject):
     args = (command.args or "").strip()
     coords = parse_coords(args)
     query, sched = (args, None) if coords and not coords[2] else split_place_schedule(args)
+
+    async def subscribe(target: Message, place: Place):
+        if sched:
+            await create_sub(target, uid, place, sched)
+        else:
+            await ask_schedule(target, place)
+
     if query:
-        place = await resolve_place(m, query)
-        if not place:
-            return
-    else:
-        place = last_places.get(uid)
-        if not place:
-            await m.answer(NO_PLACE, reply_markup=keyboard)
-            return
-    if sched:
-        await create_sub(m, uid, place, sched)
-    else:
-        await ask_schedule(m, place)
+        await with_place(m, uid, query, subscribe)
+        return
+    place = last_places.get(uid)
+    if not place:
+        await m.answer(NO_PLACE, reply_markup=keyboard)
+        return
+    await subscribe(m, place)
 
 
 @router.message(Command("subs"))
@@ -840,10 +893,7 @@ async def by_text(m: Message):
     uid = m.from_user.id
     state = waiting.pop(uid, None)
     if state and state[0] == "add":
-        place = await resolve_place(m, m.text.strip())
-        if place:
-            await save_place(m, uid, place)
-        else:
+        if not await with_place(m, uid, m.text, lambda target, place: save_place(target, uid, place)):
             waiting[uid] = state  # даём попробовать ещё раз
         return
     if state and state[0] == "sub":

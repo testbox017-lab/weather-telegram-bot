@@ -42,14 +42,19 @@ class WeatherClient:
             return await r.json()
 
     async def find_city(self, query: str) -> Place | None:
-        data = await self._get(GEO_URL, {"name": query, "count": 1, "language": "ru", "format": "json"})
-        results = data.get("results") or []
-        if not results:
-            return None
-        c = results[0]
-        parts = [c.get("name"), c.get("admin1"), c.get("country")]
-        name = ", ".join(dict.fromkeys(p for p in parts if p))
-        return Place(name, c["latitude"], c["longitude"])
+        places, _ = await self.find_cities(query)
+        return places[0] if places else None
+
+    async def find_cities(self, query: str) -> tuple[list[Place], bool]:
+        """Все подходящие места (до geo.MAX_CHOICES) и признак «вариант очевиден, можно не спрашивать».
+
+        После запятой можно уточнить регион или страну: «Бахмач, Черниговская».
+        """
+        from geo import candidates, split_query
+
+        name = split_query(query)[0] or query
+        data = await self._get(GEO_URL, {"name": name, "count": 20, "language": "ru", "format": "json"})
+        return candidates(data.get("results") or [], query)
 
     async def forecast(self, place: Place, days: int = 1) -> str:
         return format_forecast(place.name, await self.fetch(place, days), days)
