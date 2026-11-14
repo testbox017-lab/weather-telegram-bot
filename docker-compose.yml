@@ -1,6 +1,10 @@
 services:
   weather-bot:
-    build: .
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+        GIT_DATE: ${GIT_DATE:-}
     container_name: weather-bot
     env_file: .env
     environment:

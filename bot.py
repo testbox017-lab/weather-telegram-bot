@@ -23,7 +23,9 @@ from places import (DEFAULT_NAME, FAV_LIMIT, Favorites, LastPlaces, build_cb, co
                     parse_coords)
 from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, describe as describe_sched, local_time,
                   parse_schedule, run_due, split_place_schedule)
-from weather import DAYS_RU, Place, WeatherClient, format_day, format_forecast
+import health
+from weather import (ARCHIVE_URL, DAYS_RU, FORECAST_URL, GEO_URL, Place, WeatherClient, format_day,
+                     format_forecast)
 
 router = Router()
 client: WeatherClient  # создаётся в main()
@@ -54,6 +56,7 @@ BTN_HELP = "❓ Помощь"
 BTN_PLACES = "⭐ Мои места"
 BTN_DATE = "📆 Выбрать дату"
 BTN_SUBS = "🔔 Рассылка"
+BTN_PING = "📡 Связь"
 NO_PLACE = "Напишите название города или нажмите «📍 Моя геолокация»"
 ASK_PLACE = ("Отправьте название города, координаты (например <code>51.18, 32.83</code>) "
              "или геолокацию — добавлю в «Мои места»")
@@ -61,8 +64,9 @@ ASK_PLACE = ("Отправьте название города, координа
 keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_GEO, request_location=True), KeyboardButton(text=BTN_NOW)],
-        [KeyboardButton(text=BTN_WEEK), KeyboardButton(text=BTN_HELP)],
-        [KeyboardButton(text=BTN_PLACES), KeyboardButton(text=BTN_DATE), KeyboardButton(text=BTN_SUBS)],
+        [KeyboardButton(text=BTN_WEEK), KeyboardButton(text=BTN_DATE)],
+        [KeyboardButton(text=BTN_PLACES), KeyboardButton(text=BTN_SUBS)],
+        [KeyboardButton(text=BTN_PING), KeyboardButton(text=BTN_HELP)],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -92,7 +96,8 @@ HELP = (
     "• /subscribe [город] — выбрать периодичность: каждый 1/3/6/12 ч, раз в сутки или в своё время\n"
     "• /subscribe <i>Бахмач 3ч</i> или <i>Бахмач 08:00, 20:00</i> — сразу\n"
     "• /subs — ваши рассылки, /unsubscribe <i>номер</i> или <i>all</i> — отключить\n"
-    "• 🔔 Подписаться — кнопка под прогнозом"
+    "• 🔔 Подписаться — кнопка под прогнозом\n\n"
+    f"{BTN_PING} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
 )
 
 
@@ -680,6 +685,7 @@ async def scheduler(bot: Bot, every: float = 30):
                            header=f"🔔 <b>Рассылка:</b> {describe_sched(sub['sched'])}\n")
 
     while True:
+        health.mark_tick()
         try:
             n = await run_due(subs, datetime.now(timezone.utc), send, (TelegramForbiddenError,))
             if n:
@@ -687,6 +693,92 @@ async def scheduler(bot: Bot, every: float = 30):
         except Exception:
             logging.exception("scheduler error")
         await asyncio.sleep(every)
+
+
+# ---------- Проверка связи ----------
+
+ping_limiter = health.RateLimiter(10)
+VERSION = health.bot_version()
+
+
+def ping_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 Проверить снова",
+                                                                       callback_data="pg")]])
+
+
+async def _http(url: str, params: dict) -> str:
+    async with client.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=5)) as r:
+        r.raise_for_status()
+        await r.read()
+        return f"HTTP {r.status}"
+
+
+async def build_ping_report(tg_bot) -> str:
+    async def tg():
+        await tg_bot.get_me()
+
+    checks = await asyncio.gather(
+        health.measure("Telegram API", tg),
+        health.measure("Open-Meteo прогноз", lambda: _http(FORECAST_URL, {
+            "latitude": 50.45, "longitude": 30.52, "current": "temperature_2m"})),
+        health.measure("Open-Meteo поиск городов", lambda: _http(GEO_URL, {"name": "Kyiv", "count": 1})),
+        health.measure("Open-Meteo архив", lambda: _http(ARCHIVE_URL, {
+            "latitude": 50.45, "longitude": 30.52, "start_date": "2020-01-01", "end_date": "2020-01-01",
+            "daily": "temperature_2m_max"})),
+    )
+    all_subs = [s for items in subs._data.values() for s in items]
+    next_send = min((datetime.fromisoformat(s["next"]) for s in all_subs), default=None)
+    return health.format_report(list(checks), datetime.now(timezone.utc), version=VERSION,
+                                subs_total=len(all_subs), next_send=next_send, tick=health.last_tick)
+
+
+async def run_ping(target: Message, user_id: int, edit: bool = False):
+    left = ping_limiter.wait_left(user_id)
+    if left:
+        return f"Подождите {left:.0f} с перед следующей проверкой"
+    msg = target if edit else await target.answer("⏳ Проверяю…")
+    if edit:
+        try:
+            await msg.edit_text("⏳ Проверяю…")
+        except Exception:
+            pass
+    try:
+        text = await build_ping_report(target.bot)
+    except Exception:
+        logging.exception("ping error")
+        text = "🔴 Не удалось выполнить проверку, попробуйте позже"
+    try:
+        await msg.edit_text(text, reply_markup=ping_markup())
+    except Exception:
+        await target.answer(text, reply_markup=ping_markup())
+    return None
+
+
+@router.message(Command("ping", "status"))
+async def ping_cmd(m: Message):
+    waiting.pop(m.from_user.id, None)
+    warn = await run_ping(m, m.from_user.id)
+    if warn:
+        await m.answer(warn)
+
+
+@router.message(F.text == BTN_PING)
+async def btn_ping(m: Message):
+    await ping_cmd(m)
+
+
+@router.callback_query(F.data == "pg")
+async def on_ping_button(cb: CallbackQuery):
+    if not isinstance(cb.message, Message):
+        await cb.answer("Сообщение устарело, отправьте /ping", show_alert=True)
+        return
+    left = ping_limiter.wait_left(cb.from_user.id)
+    if left:
+        await cb.answer(f"Подождите {left:.0f} с", show_alert=False)
+        return
+    ping_limiter._last.pop(cb.from_user.id, None)  # разрешение уже проверено выше
+    await cb.answer()
+    await run_ping(cb.message, cb.from_user.id, edit=True)
 
 
 # ---------- Общие кнопки и ввод ----------
@@ -796,6 +888,7 @@ async def main():
             BotCommand(command="subscribe", description="Рассылка погоды: /subscribe Город 3ч"),
             BotCommand(command="subs", description="Мои рассылки"),
             BotCommand(command="unsubscribe", description="Отключить рассылку: /unsubscribe номер|all"),
+            BotCommand(command="ping", description="Проверить связь с сервером"),
             BotCommand(command="help", description="Справка"),
         ])
     except Exception:

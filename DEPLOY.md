@@ -67,7 +67,7 @@ chmod 600 .env     # читать файл может только владел�
 | Остановить | `docker compose stop` |
 | Запустить снова | `docker compose start` |
 | Статус | `docker compose ps` |
-| **Обновить код** | `git pull && docker compose up -d --build` |
+| **Обновить код** | `git pull && GIT_COMMIT=$(git rev-parse --short HEAD) GIT_DATE=$(git log -1 --format=%cd --date=format:%d.%m.%Y) docker compose up -d --build` |
 
 ### Обновление с Windows без git
 
