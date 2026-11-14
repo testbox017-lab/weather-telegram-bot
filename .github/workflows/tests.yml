@@ -26,4 +26,13 @@ jobs:
       - name: Run tests
         env:
           MPLBACKEND: Agg
-        run: pytest tests -q
+        run: python -m pytest tests -q
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image (без публикации)
+        run: docker build -t weather-bot:ci .
+      - name: Import check on server Python
+        run: docker run --rm -e DATA_DIR=/tmp weather-bot:ci python -c "import bot, sys; print('import ok', sys.version.split()[0])"
