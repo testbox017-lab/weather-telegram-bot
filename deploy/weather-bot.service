@@ -1,0 +1,17 @@
+[Unit]
+Description=Weather Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=weatherbot
+WorkingDirectory=/opt/weather-bot
+EnvironmentFile=/opt/weather-bot/.env
+Environment=PYTHONUNBUFFERED=1 MPLBACKEND=Agg
+ExecStart=/opt/weather-bot/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

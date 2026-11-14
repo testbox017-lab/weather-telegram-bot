@@ -1,0 +1,14 @@
+.env
+*.json
+data/
+*.log
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+tests/
+test_*.png
+*.png
+.git/
+*.bat
+deploy/
