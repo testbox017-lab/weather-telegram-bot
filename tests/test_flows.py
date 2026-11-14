@@ -1,0 +1,210 @@
+"""Сценарии с ожиданием ввода через настоящий диспетчер aiogram (роутеры, FSM, middleware).
+
+Telegram подменён сессией, которая записывает запросы бота, Open-Meteo — FakeClient.
+"""
+import os
+import tempfile
+from datetime import date, datetime, timezone
+
+import pytest
+
+os.environ.setdefault("DATA_DIR", tempfile.mkdtemp())
+from aiogram import Bot  # noqa: E402
+from aiogram.client.session.base import BaseSession  # noqa: E402
+from aiogram.fsm.storage.memory import MemoryStorage  # noqa: E402
+from aiogram.methods import GetMe, SendMediaGroup  # noqa: E402
+from aiogram.types import CallbackQuery, Chat, Location, Message, Update, User  # noqa: E402
+
+import bot as entry  # noqa: E402
+import core  # noqa: E402
+from core import BTN_NOW, Input  # noqa: E402
+from dates import build_cal_cb  # noqa: E402
+from handlers import dates as dates_router, subs as subs_router, weather as weather_router  # noqa: E402
+from weather import Place  # noqa: E402
+
+UID = 4242
+USER = User(id=UID, is_bot=False, first_name="Dmitry")
+CHAT = Chat(id=UID, type="private")
+DP = entry.build_dispatcher()  # роутеры подключаются к диспетчеру один раз
+BAKHMACH = Place("Бахмач, Черниговская область, Украина", 51.18, 32.83)
+
+
+class FakeSession(BaseSession):
+    """Вместо HTTP к Telegram: запоминает методы и отвечает правдоподобными объектами."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls, self._id = [], 1000
+
+    def _msg(self, text=None):
+        self._id += 1
+        return Message(message_id=self._id, date=datetime.now(timezone.utc), chat=CHAT, text=text)
+
+    async def make_request(self, bot, method, timeout=None):
+        self.calls.append(method)
+        if isinstance(method, GetMe):
+            return User(id=1, is_bot=True, first_name="bot", username="test_bot")
+        if isinstance(method, SendMediaGroup):
+            return [self._msg() for _ in method.media]
+        if hasattr(method, "chat_id"):
+            return self._msg(getattr(method, "text", None))
+        return True
+
+    async def stream_content(self, *args, **kwargs):
+        yield b""
+
+    async def close(self):
+        pass
+
+    def texts(self):
+        return [m.text for m in self.calls if getattr(m, "text", None)]
+
+
+class FakeClient:
+    async def find_cities(self, query):
+        return ([BAKHMACH], True) if query.startswith("Бахмач") else ([], False)
+
+    async def timezone(self, place):
+        return "Europe/Kyiv"
+
+
+@pytest.fixture
+def tg(monkeypatch, tmp_path):
+    for name, cls in (("saved", core.Favorites), ("last_places", core.LastPlaces), ("subs", core.Subscriptions)):
+        store = cls(tmp_path / f"{name}.json")
+        monkeypatch.setattr(core, name, store)
+        for mod in (dates_router, subs_router, weather_router, entry.places):
+            if hasattr(mod, name):
+                monkeypatch.setattr(mod, name, store)
+    monkeypatch.setattr(core, "client", FakeClient(), raising=False)
+    session = FakeSession()
+    tg_bot = Bot("42:TEST", session=session)
+    dp = DP
+    dp.fsm.storage = MemoryStorage()  # каждый тест — с чистым состоянием
+    n = iter(range(1, 10_000))
+
+    async def send(text=None, location=None):
+        msg = Message(message_id=next(n), date=datetime.now(timezone.utc), chat=CHAT, from_user=USER, text=text,
+                      location=Location(latitude=location[0], longitude=location[1]) if location else None)
+        await dp.feed_update(tg_bot, Update(update_id=next(n), message=msg))
+
+    async def press(data):
+        msg = Message(message_id=next(n), date=datetime.now(timezone.utc), chat=CHAT, text="кнопки")
+        cb = CallbackQuery(id=str(next(n)), from_user=USER, chat_instance="ci", data=data, message=msg)
+        await dp.feed_update(tg_bot, Update(update_id=next(n), callback_query=cb))
+
+    async def state():
+        return await dp.fsm.get_context(tg_bot, chat_id=UID, user_id=UID).get_state()
+
+    class T:
+        pass
+
+    t = T()
+    t.send, t.press, t.state, t.session = send, press, state, session
+    return t
+
+
+@pytest.fixture
+def recorded(monkeypatch):
+    """Подменяет отправку погоды: проверяем маршрутизацию, а не графики."""
+    got = []
+
+    async def city(m, query, days):
+        got.append(("city", query, days))
+
+    async def last(m, days):
+        got.append(("last", days))
+
+    async def day(m, place, d, user_id):
+        got.append(("day", place, d))
+
+    monkeypatch.setattr(weather_router, "reply_for_city", city)
+    monkeypatch.setattr(weather_router, "reply_for_last", last)
+    monkeypatch.setattr(dates_router, "send_day", day)
+    return got
+
+
+@pytest.mark.asyncio
+async def test_add_place_retry_then_saved(tg, recorded):
+    await tg.send("/add")
+    assert await tg.state() == Input.place.state
+    await tg.send("Абырвалг")  # не нашлось — бот ждёт дальше
+    assert "Не нашёл" in tg.session.texts()[-1]
+    assert await tg.state() == Input.place.state
+    await tg.send("Бахмач")
+    assert [p.name for p in core.saved.list(UID)] == [BAKHMACH.name]
+    assert await tg.state() is None
+    assert not recorded  # текст ушёл в «Мои места», а не в погоду
+
+
+@pytest.mark.asyncio
+async def test_add_place_by_location(tg):
+    await tg.press("pl:add")
+    await tg.send(location=(50.45, 30.52))
+    assert [(p.lat, p.lon) for p in core.saved.list(UID)] == [(50.45, 30.52)]
+    assert await tg.state() is None
+
+
+@pytest.mark.asyncio
+async def test_menu_button_cancels_input(tg, recorded):
+    await tg.send("/add")
+    await tg.send(BTN_NOW)
+    assert recorded == [("last", 1)] and await tg.state() is None
+    await tg.send("Бахмач")  # теперь это просто город
+    assert recorded[-1] == ("city", "Бахмач", 1) and not core.saved.list(UID)
+
+
+@pytest.mark.asyncio
+async def test_known_command_cancels_unknown_keeps(tg, recorded):
+    await tg.send("/add")
+    await tg.send("/nosuchcommand")  # неизвестную команду бот не обрабатывает — ожидание остаётся
+    assert await tg.state() == Input.place.state
+    await tg.send("/places")
+    assert await tg.state() is None
+
+
+@pytest.mark.asyncio
+async def test_location_while_waiting_for_date_shows_weather(tg, monkeypatch):
+    got = []
+
+    async def fake_reply(m, place, days, user_id):
+        got.append(place.name)
+
+    monkeypatch.setattr(weather_router, "reply_for_place", fake_reply)
+    await tg.press(build_cal_cb("i", 51.18, 32.83))
+    await tg.send(location=(51.18, 32.83))
+    assert got == ["Ваше местоположение"] and await tg.state() is None
+
+
+@pytest.mark.asyncio
+async def test_date_input(tg, recorded):
+    await tg.press(build_cal_cb("i", 51.18, 32.83))
+    assert await tg.state() == Input.date.state and "Напишите дату" in tg.session.texts()[-1]
+    await tg.send("тридцатое февраля")
+    assert "Не понял дату" in tg.session.texts()[-1] and await tg.state() == Input.date.state
+    await tg.send("21.11")
+    kind, place, day = recorded[-1]
+    assert kind == "day" and (place.lat, place.lon) == (51.18, 32.83)
+    assert (day.day, day.month) == (21, 11) and day >= date.today().replace(day=1, month=1)
+    assert await tg.state() is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_button(tg, recorded):
+    await tg.press(build_cal_cb("i", 51.18, 32.83))
+    await tg.press("x")
+    assert await tg.state() is None
+    await tg.send("21.11")
+    assert recorded == [("city", "21.11", 1)]
+
+
+@pytest.mark.asyncio
+async def test_custom_subscription_time(tg):
+    await tg.press("si:0:51.180:32.830")
+    assert await tg.state() == Input.sub_time.state
+    await tg.send("полвосьмого")
+    assert "Не понял время" in tg.session.texts()[-1] and await tg.state() == Input.sub_time.state
+    await tg.send("07:30")
+    items = core.subs.list(UID)
+    assert len(items) == 1 and items[0]["sched"]["times"] == ["07:30"]
+    assert "Рассылка включена" in tg.session.texts()[-1] and await tg.state() is None

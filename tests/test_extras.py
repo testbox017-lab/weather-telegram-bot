@@ -131,7 +131,8 @@ def test_compare_chart_png():
 
 
 def test_bot_norm_line_and_compare(tmp_path, monkeypatch):
-    import bot
+    import core
+    from handlers import places as places_router
     from weather import Place
 
     class Fake:
@@ -151,13 +152,13 @@ def test_bot_norm_line_and_compare(tmp_path, monkeypatch):
         async def answer_photo(self, photo, caption=None, **kw):
             self.sent.append(("photo", caption))
 
-    monkeypatch.setattr(bot, "client", Fake(), raising=False)
-    monkeypatch.setattr(bot, "normals", normals.Normals(tmp_path / "n.json"))
+    monkeypatch.setattr(core, "client", Fake(), raising=False)
+    monkeypatch.setattr(core, "normals", normals.Normals(tmp_path / "n.json"))
     p = Place("A", 51.18, 32.83)
-    line = asyncio.run(bot.norm_line(p, date(2026, 11, 14), {"temperature_2m_max": [15], "temperature_2m_min": [7]}))
+    line = asyncio.run(core.norm_line(p, date(2026, 11, 14), {"temperature_2m_max": [15], "temperature_2m_min": [7]}))
     assert "теплее нормы" in line
 
-    monkeypatch.setattr(bot.saved, "list", lambda uid: [p, Place("B", 50.45, 30.52)])
+    monkeypatch.setattr(core.saved, "list", lambda uid: [p, Place("B", 50.45, 30.52)])
     m = Msg()
-    asyncio.run(bot.send_compare(m, 1))
+    asyncio.run(places_router.send_compare(m, 1))
     assert m.sent[0][0] == "photo" and "Теплее всего сейчас: B" in m.sent[0][1]
