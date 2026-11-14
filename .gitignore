@@ -14,3 +14,4 @@ python_path.txt
 subscriptions.json
 alerts.json
 .claude/settings.local.json
+backups/

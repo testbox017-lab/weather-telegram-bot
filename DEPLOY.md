@@ -128,3 +128,33 @@ scp last_places.json saved_places.json user@IP_сервера:/opt/weather-bot/d
 
 Для способа B — в `/opt/weather-bot/` (или в папку из `DATA_DIR` в `.env`), затем
 `sudo chown weatherbot:weatherbot` на эти файлы.
+
+
+## Автодеплой из GitHub Actions
+
+После зелёных тестов и сборки Docker на `main` job `deploy` заходит на сервер по отдельному ключу и
+запускает `/usr/local/bin/weather-bot-deploy` (git pull, пересборка, проверка, что контейнер работает).
+Ключу в `authorized_keys` разрешена только эта команда (`restrict,command="..."`), поэтому даже при
+утечке им нельзя открыть shell на сервере.
+
+Настройка (один раз):
+
+1. На сервере: `bash /opt/weather-bot/deploy/install-server.sh` — ставит скрипты и ежедневный бэкап.
+2. На ПК создать ключ без пароля: `ssh-keygen -t ed25519 -N "" -C github-deploy -f weather-deploy`.
+3. Добавить на сервере в `/root/.ssh/authorized_keys` строку
+   `restrict,command="/usr/local/bin/weather-bot-deploy" <содержимое weather-deploy.pub>`.
+4. Секреты репозитория (Settings → Secrets → Actions или `gh secret set`):
+   `DEPLOY_SSH_KEY` — содержимое `weather-deploy` (приватный ключ), `DEPLOY_HOST` — IP сервера,
+   `DEPLOY_KNOWN_HOSTS` — вывод `ssh-keyscan -t ed25519 <IP>`. Файл ключа после этого удалить с ПК.
+
+Без секретов job `deploy` просто пропускается. Отключить автодеплой — удалить строку ключа из
+`authorized_keys` или секрет `DEPLOY_SSH_KEY`. Вручную обновить можно как раньше или командой
+`ssh root@<IP> weather-bot-deploy`.
+
+## Бэкап данных
+
+`/usr/local/bin/weather-bot-backup` каждый день в 03:30 упаковывает `/opt/weather-bot/data`
+(места, рассылки, предупреждения) в `/var/backups/weather-bot/`, хранит 14 последних копий,
+самая свежая — `latest.tar.gz`. Лог — `/var/log/weather-bot-backup.log`.
+Скачать копию на ПК: `backup_pull.bat` (сохранит в `backups\weather-bot-ГГГГ-ММ-ДД.tar.gz`).
+Восстановить: `docker compose stop && tar -xzf <копия> -C /opt/weather-bot/data && docker compose start`.

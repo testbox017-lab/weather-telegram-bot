@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:   # ручной запуск: тесты + деплой
 
 permissions:
   contents: read
@@ -36,3 +37,25 @@ jobs:
         run: docker build -t weather-bot:ci .
       - name: Import check on server Python
         run: docker run --rm -e DATA_DIR=/tmp weather-bot:ci python -c "import bot, sys; print('import ok', sys.version.split()[0])"
+
+  deploy:
+    # после зелёных тестов и сборки на main сервер обновляется сам
+    needs: [pytest, docker]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency: deploy
+    steps:
+      - name: Deploy to server
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$HOST" ]; then
+            echo "Секреты DEPLOY_SSH_KEY / DEPLOY_HOST не заданы — деплой пропущен"; exit 0
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # ключ на сервере ограничен командой weather-bot-deploy, другой доступ им не получить
+          ssh -i ~/.ssh/deploy -o BatchMode=yes -o StrictHostKeyChecking=yes root@"$HOST" deploy
