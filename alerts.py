@@ -202,15 +202,25 @@ class Alerts:
         return Place(alert["name"], float(alert["lat"]), float(alert["lon"]))
 
 
-async def check_all(alerts: Alerts, fetch, send, now: datetime, blocked_exc: tuple = ()) -> int:
-    """Проверить все места. fetch(place) → data, send(user_id, alert, texts) — корутины."""
+async def check_all(alerts: Alerts, fetch, send, now: datetime, blocked_exc: tuple = (),
+                    model_of=lambda uid: None) -> int:
+    """Проверить все места. fetch(place) → data, send(user_id, alert, texts) — корутины.
+
+    fetch вызывается от имени владельца места (prefs.current_user), чтобы взять его модель прогноза.
+    """
+    from prefs import current_user
+
     sent = 0
-    cache: dict[tuple[float, float], dict] = {}  # одно место у нескольких пользователей — один запрос
+    cache: dict[tuple, dict] = {}  # одно место и модель у нескольких пользователей — один запрос
     for uid, alert in alerts.all():
-        key = (round(alert["lat"], 2), round(alert["lon"], 2))
+        key = (model_of(uid), round(alert["lat"], 2), round(alert["lon"], 2))
         try:
             if key not in cache:
-                cache[key] = await fetch(Alerts.place(alert))
+                token = current_user.set(uid)
+                try:
+                    cache[key] = await fetch(Alerts.place(alert))
+                finally:
+                    current_user.reset(token)
             data = cache[key]
             if quiet(data):
                 continue

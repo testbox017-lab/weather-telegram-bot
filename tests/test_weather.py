@@ -50,6 +50,19 @@ async def test_forecast_params():
     assert c.calls[0][1]["forecast_days"] == 7 and c.calls[0][1]["wind_speed_unit"] == "ms"
 
 
+@pytest.mark.asyncio
+async def test_model_param_from_hook():
+    c = FakeClient([{"current": CURRENT, "daily": DAILY}] * 3)
+    await c.fetch(Place("X", 1, 2), 1)
+    assert "models" not in c.calls[0][1]
+    c.model_hook = lambda: "ecmwf_ifs025"
+    await c.fetch(Place("X", 1, 2), 1)
+    assert c.calls[1][1]["models"] == "ecmwf_ifs025"
+    from datetime import date
+    await c.fetch_day(Place("X", 1, 2), date(2020, 1, 1), archive=True)
+    assert "models" not in c.calls[2][1]  # у архива своя реанализ-модель
+
+
 class FakeResponse:
     def __init__(self, status, body=None):
         self.status, self.body = status, body

@@ -193,3 +193,28 @@ def test_weekend_saturday_morning_unchanged():
     d["current"] = {"time": "2026-11-14T09:00"}
     text = weekend.format_weekend("Киев", d)
     assert "Суббота, сегодня" in text and "вечер" not in text
+
+
+def waqi(aqi=42, geo=(51.19, 32.84), **iaqi):
+    return {"aqi": aqi, "city": {"name": "Бахмач, школа", "geo": list(geo)},
+            "time": {"s": "2026-11-14 20:00:00"}, "iaqi": {k: {"v": v} for k, v in iaqi.items()}}
+
+
+def test_waqi_near_station():
+    text = air.format_waqi("Бахмач", waqi(120, pm25=120, pm10=40), 51.18, 32.83, {"birch_pollen": 0})
+    assert "Станция: Бахмач, школа, 1.3 км, измерено 14.11 20:00" in text
+    assert "вредный для чувствительных" in text and "US AQI 120" in text
+    assert "PM2.5 120, PM10 40" in text and "💡" in text
+    assert "Пыльцы в воздухе почти нет" in text and "aqicn.org" in text
+
+
+def test_waqi_station_too_far_or_silent():
+    far = air.format_waqi("Бахмач", waqi(geo=(51.5, 32.83)), 51.18, 32.83)
+    assert "в пределах 5 км нет: ближайшая — Бахмач, школа, 36 км" in far and "US AQI" not in far
+    silent = air.format_waqi("Бахмач", waqi(aqi="-"), 51.18, 32.83)
+    assert "не передаёт данные" in silent
+
+
+def test_us_aqi_levels():
+    assert air.us_aqi_level(50)[1] == "хороший" and air.us_aqi_level(51)[1] == "умеренный"
+    assert air.us_aqi_level(350)[1] == "опасный"

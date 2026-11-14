@@ -37,6 +37,12 @@ class WeatherClient:
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
 
+    model_hook = staticmethod(lambda: None)  # модель прогноза текущего пользователя (prefs.MODELS), задаёт bot.main
+
+    def _model_param(self) -> dict:
+        model = self.model_hook()
+        return {"models": model} if model and model != "best_match" else {}
+
     retry_delays = (1.0, 3.0)  # повторы при временных сбоях Open-Meteo (5xx, таймаут, обрыв связи)
 
     async def _get(self, url: str, params: dict, timeout: float = 10) -> dict:
@@ -91,8 +97,18 @@ class WeatherClient:
             "timezone": "auto",
             "forecast_days": max(days, 2),
             "past_days": 1,
+            **self._model_param(),
         })
         return split_yesterday(data)
+
+    async def fetch_waqi(self, place: Place, token: str) -> dict:
+        """Ближайшая станция WAQI (aqicn.org): data из ответа API; ошибка API — ValueError."""
+        from air import WAQI_URL
+
+        resp = await self._get(WAQI_URL.format(lat=place.lat, lon=place.lon), {"token": token})
+        if resp.get("status") != "ok" or not isinstance(resp.get("data"), dict):
+            raise ValueError(f"WAQI: {resp.get('data')}")
+        return resp["data"]
 
     async def fetch_air(self, place: Place) -> dict:
         """Качество воздуха и пыльца: current + почасовой индекс EAQI на 2 суток."""
@@ -131,6 +147,7 @@ class WeatherClient:
             "timezone": "auto",
             "start_date": day.isoformat(),
             "end_date": day.isoformat(),
+            **({} if archive else self._model_param()),
         })
 
 

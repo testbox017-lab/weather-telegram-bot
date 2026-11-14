@@ -1,6 +1,8 @@
-"""Роутер settings: настройка предупреждений (/alerts, фоновая alert_checker()) и проверка связи (/ping)."""
+"""Роутер settings: источники данных (/settings), предупреждения (/alerts, фоновая alert_checker())
+и проверка связи (/ping)."""
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from html import escape
 
@@ -13,11 +15,65 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 import core
 import health
 from alerts import ALERT_LIMIT, CHECK_EVERY, KINDS, Alerts, check_all
-from core import BTN_ALERTS, BTN_PING, NO_PLACE, alerts, keyboard, last_places, place_name, subs, with_place
+from core import (BTN_ALERTS, BTN_PING, BTN_SETTINGS, NO_PLACE, alerts, keyboard, last_places, place_name, prefs, subs,
+                  with_place)
+from prefs import AIR_SOURCES, MODELS
 from places import build_cb
 from weather import ARCHIVE_URL, FORECAST_URL, GEO_URL, Place
 
 router = Router(name="settings")
+
+# ---------- Источники данных ----------
+
+def settings_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    """Как в приложениях погоды: разделы «Погода» и «Качество воздуха», выбранное отмечено галочкой."""
+    p = prefs.get(user_id)
+    b = InlineKeyboardButton
+    lines = ["⚙️ <b>Настройки</b>", "", "<b>ПОГОДА</b> — модель прогноза Open-Meteo:"]
+    rows = []
+    for key, (title, about) in MODELS.items():
+        mark = "✅ " if p["model"] == key else ""
+        lines.append(f"{'✅' if mark else '▫️'} <b>{title}</b> — {about}")
+        rows.append([b(text=f"{mark}{title}", callback_data=f"cfg:model:{key}")])
+    lines += ["", "<b>КАЧЕСТВО ВОЗДУХА</b>:"]
+    air_row = []
+    for key, (title, about) in AIR_SOURCES.items():
+        mark = "✅ " if p["air"] == key else ""
+        lines.append(f"{'✅' if mark else '▫️'} <b>{title}</b> — {about}")
+        air_row.append(b(text=f"{mark}{title.split(' · ')[0]}", callback_data=f"cfg:air:{key}"))
+    rows.append(air_row)
+    if p["air"] == "waqi" and not os.getenv("WAQI_TOKEN", "").strip():
+        lines += ["", "⚠️ Для WAQI на сервере пока не задан токен — до этого показываю Open-Meteo."]
+    lines += ["", "Нажмите, чтобы выбрать. Настройка действует на прогнозы, рассылки и предупреждения."]
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("settings"))
+async def settings_cmd(m: Message):
+    text, markup = settings_view(m.from_user.id)
+    await m.answer(text, reply_markup=markup)
+
+
+@router.message(F.text == BTN_SETTINGS)
+async def btn_settings(m: Message):
+    await settings_cmd(m)
+
+
+@router.callback_query(F.data.startswith("cfg:"))
+async def on_settings_button(cb: CallbackQuery):
+    _, key, value = (cb.data.split(":") + ["", ""])[:3]
+    if not prefs.set(cb.from_user.id, key, value):
+        await cb.answer("Кнопка устарела", show_alert=True)
+        return
+    title = (MODELS if key == "model" else AIR_SOURCES)[value][0]
+    await cb.answer(f"Выбрано: {title}")
+    if isinstance(cb.message, Message):
+        text, markup = settings_view(cb.from_user.id)
+        try:
+            await cb.message.edit_text(text, reply_markup=markup)
+        except Exception:  # «message is not modified» — повторное нажатие
+            pass
+
 
 # ---------- Предупреждения ----------
 
@@ -131,7 +187,7 @@ async def alert_checker(bot: Bot):
     while True:
         try:
             n = await check_all(alerts, lambda p: core.client.fetch(p, 2), send, datetime.now(timezone.utc),
-                                (TelegramForbiddenError,))
+                                (TelegramForbiddenError,), model_of=lambda uid: prefs.get(uid)["model"])
             if n:
                 logging.info("alerts: sent %d", n)
         except Exception:
