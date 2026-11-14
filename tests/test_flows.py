@@ -70,10 +70,11 @@ class FakeClient:
 
 @pytest.fixture
 def tg(monkeypatch, tmp_path):
-    for name, cls in (("saved", core.Favorites), ("last_places", core.LastPlaces), ("subs", core.Subscriptions)):
+    for name, cls in (("saved", core.Favorites), ("last_places", core.LastPlaces), ("subs", core.Subscriptions),
+                      ("prefs", core.Prefs)):
         store = cls(tmp_path / f"{name}.json")
         monkeypatch.setattr(core, name, store)
-        for mod in (dates_router, subs_router, weather_router, entry.places):
+        for mod in (dates_router, subs_router, weather_router, entry.places, entry.settings):
             if hasattr(mod, name):
                 monkeypatch.setattr(mod, name, store)
     monkeypatch.setattr(core, "client", FakeClient(), raising=False)
@@ -253,3 +254,46 @@ async def test_subs_buttons_use_short_names(tg):
     await tg.send("/subs")
     buttons = [b.text for row in tg.session.calls[-1].reply_markup.inline_keyboard for b in row]
     assert "❌ 1. Бахмач — каждые 12 ч" in buttons
+
+
+@pytest.mark.asyncio
+async def test_settings_choose_model_and_air(tg):
+    await tg.send("/settings")
+    assert "✅ <b>Авто</b>" in tg.session.texts()[-1]
+    await tg.press("cfg:model:ecmwf_ifs025")
+    await tg.press("cfg:air:off")
+    assert core.prefs.get(UID) == {"model": "ecmwf_ifs025", "air": "off"}
+    edited = [c for c in tg.session.calls if isinstance(c, EditMessageText)][-1]
+    assert "✅ <b>ECMWF</b>" in edited.text and "✅ <b>Выключено</b>" in edited.text
+    await tg.press("cfg:model:nonsense")
+    assert core.prefs.get(UID)["model"] == "ecmwf_ifs025"
+
+
+@pytest.mark.asyncio
+async def test_air_off_hides_button_and_command(tg):
+    from prefs import current_user
+
+    core.prefs.set(UID, "air", "off")
+    await tg.press("aq:51.180:32.830")
+    assert "Качество воздуха выключено" in tg.session.texts()[-1]
+    token = current_user.set(UID)
+    try:
+        buttons = [b.text for row in core.forecast_markup(1, BAKHMACH).inline_keyboard for b in row]
+    finally:
+        current_user.reset(token)
+    assert "🌫 Воздух" not in buttons and "🏖 Выходные" in buttons
+    assert "🌫 Воздух" in [b.text for row in core.forecast_markup(1, BAKHMACH).inline_keyboard for b in row]
+
+
+@pytest.mark.asyncio
+async def test_handlers_see_current_user_model(tg, monkeypatch):
+    """Middleware ставит current_user — клиент Open-Meteo берёт модель пользователя."""
+    seen = []
+
+    async def fake_reply(m, place, days, user_id):
+        seen.append(core.prefs.current()["model"])
+
+    monkeypatch.setattr(weather_router, "reply_for_place", fake_reply)
+    core.prefs.set(UID, "model", "gfs_seamless")
+    await tg.send(location=(51.18, 32.83))
+    assert seen == ["gfs_seamless"]

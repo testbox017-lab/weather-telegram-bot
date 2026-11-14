@@ -77,18 +77,87 @@ def format_air(name: str, data: dict) -> str:
     if tip:
         lines.append(f"💡 {tip}")
 
+    lines.append("")
+    lines.append(pollen_line(cur))
+    return "\n".join(lines)
+
+
+def pollen_line(cur: dict) -> str:
+    """«🌼 Пыльца: берёза — высокая (150)» по current из Open-Meteo Air Quality."""
     pollen = []
     for var, (title, _) in POLLEN.items():
         v = cur.get(var)
         level = pollen_level(var, v) if v is not None else None
         if level:
             pollen.append((POLLEN_WORDS.index(level), f"{title} — {level} ({round(v)})"))
-    lines.append("")
     if pollen:
         pollen.sort(key=lambda p: -p[0])
-        lines.append("🌼 Пыльца: " + "; ".join(p[1] for p in pollen))
-    elif any(cur.get(v) is not None for v in POLLEN):
-        lines.append("🌼 Пыльцы в воздухе почти нет")
+        return "🌼 Пыльца: " + "; ".join(p[1] for p in pollen)
+    if any(cur.get(v) is not None for v in POLLEN):
+        return "🌼 Пыльцы в воздухе почти нет"
+    return "🌼 Прогноз пыльцы доступен только для Европы"
+
+
+# ---------- WAQI (aqicn.org): измерения ближайшей станции ----------
+
+WAQI_URL = "https://api.waqi.info/feed/geo:{lat};{lon}/"
+WAQI_RADIUS_KM = 5  # станция дальше — значения не показываем
+# Индекс US AQI (EPA), который отдаёт WAQI: верхняя граница → оценка
+US_AQI_LEVELS = [(50, "🟢", "хороший"), (100, "🟡", "умеренный"), (150, "🟠", "вредный для чувствительных"),
+                 (200, "🔴", "вредный"), (300, "🟣", "очень вредный"), (float("inf"), "🟤", "опасный")]
+US_AQI_ADVICE = {
+    "вредный для чувствительных": AQI_ADVICE["умеренный"],
+    "вредный": AQI_ADVICE["плохой"],
+    "очень вредный": AQI_ADVICE["очень плохой"],
+    "опасный": AQI_ADVICE["крайне плохой"],
+}
+
+
+def us_aqi_level(aqi: float) -> tuple[str, str]:
+    for top, emoji, word in US_AQI_LEVELS:
+        if aqi <= top:
+            return emoji, word
+    return US_AQI_LEVELS[-1][1:]
+
+
+def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    dlat, dlon = radians(lat2 - lat1), radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    return 2 * 6371 * asin(sqrt(a))
+
+
+def format_waqi(name: str, data: dict, lat: float, lon: float, pollen: dict | None = None) -> str:
+    """data — поле data ответа WAQI feed; pollen — current из Open-Meteo для строки о пыльце (или None)."""
+    lines = [f"🌫 <b>Воздух — {name}</b>", ""]
+    city = data.get("city") or {}
+    station = city.get("name") or "станция без названия"
+    geo = city.get("geo") or []
+    dist = distance_km(lat, lon, float(geo[0]), float(geo[1])) if len(geo) == 2 else None
+    aqi = data.get("aqi")
+    if dist is None or dist > WAQI_RADIUS_KM:
+        where = f": ближайшая — {station}, {dist:.0f} км" if dist is not None else ""
+        lines.append(f"📡 Станций WAQI в пределах {WAQI_RADIUS_KM} км нет{where}. "
+                     "Источник можно сменить в /settings.")
+    elif not isinstance(aqi, (int, float)):
+        lines.append(f"📡 Станция {station} ({dist:.1f} км) сейчас не передаёт данные 🤷")
     else:
-        lines.append("🌼 Прогноз пыльцы доступен только для Европы")
+        when = ((data.get("time") or {}).get("s") or "")[:16]
+        stamp = f", измерено {when[8:10]}.{when[5:7]} {when[11:16]}" if len(when) == 16 else ""
+        lines.append(f"📡 Станция: {station}, {dist:.1f} км{stamp}")
+        emoji, word = us_aqi_level(aqi)
+        lines.append(f"{emoji} Качество воздуха: <b>{word}</b> (индекс US AQI {round(aqi)})")
+        iaqi = data.get("iaqi") or {}
+        parts = [f"{label} {round(iaqi[k]['v'])}" for k, label in
+                 (("pm25", "PM2.5"), ("pm10", "PM10"), ("no2", "NO₂"), ("o3", "O₃"))
+                 if isinstance((iaqi.get(k) or {}).get("v"), (int, float))]
+        if parts:
+            lines.append("🔬 Индексы: " + ", ".join(parts))
+        tip = US_AQI_ADVICE.get(word)
+        if tip:
+            lines.append(f"💡 {tip}")
+    if pollen is not None:
+        lines += ["", pollen_line(pollen)]
+    lines += ["", "<i>Данные: World Air Quality Index Project (aqicn.org)</i>"]
     return "\n".join(lines)

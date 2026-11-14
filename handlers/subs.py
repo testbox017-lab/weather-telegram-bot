@@ -17,6 +17,7 @@ from core import (BTN_SUBS, INPUT_TEXT, KEEP_INPUT, NO_PLACE, ChatTarget, Input,
                   last_places, place_data, place_from, place_name, send_prompt, send_weather,
                   short_name, subs, with_place)
 from places import build_cb, parse_coords
+from prefs import current_user
 from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, condition_met, describe as describe_sched, describe_cond,
                   local_time, parse_schedule, run_due, split_condition, split_place_schedule, split_short)
 from weather import Place, format_short
@@ -274,6 +275,13 @@ async def scheduler(bot: Bot, every: float = 30):
 
     async def send(uid: int, sub: dict):
         place = Subscriptions.place(sub)
+        token = current_user.set(uid)  # модель прогноза и кнопки — по настройкам получателя
+        try:
+            await send_sub(uid, sub, place)
+        finally:
+            current_user.reset(token)
+
+    async def send_sub(uid: int, sub: dict, place: Place):
         data = await core.client.fetch(place, 1)
         if not condition_met(sub.get("cond"), data):
             logging.info("subscription %s/%s skipped: condition %s not met", uid, sub["id"], sub.get("cond"))

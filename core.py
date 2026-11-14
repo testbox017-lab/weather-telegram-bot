@@ -22,6 +22,7 @@ from charts import daily_chart, hourly_chart, wind_humidity_chart
 from dates import build_cal_cb
 from normals import Normals, norm_text
 from places import FAV_LIMIT, Favorites, LastPlaces, build_cb, coords_name, parse_coords
+from prefs import Prefs, current_user, model_label
 from subs import SUB_LIMIT, Subscriptions
 from weather import Place, WeatherClient, format_forecast
 
@@ -47,6 +48,7 @@ saved = Favorites(DATA_DIR / "saved_places.json")
 subs = Subscriptions(DATA_DIR / "subscriptions.json")
 alerts = Alerts(DATA_DIR / "alerts.json")
 normals = Normals(DATA_DIR / "normals.json")
+prefs = Prefs(DATA_DIR / "prefs.json")
 PlaceAction = Callable[[Message, Place], Awaitable[None]]
 choices: dict[int, tuple[int, list[Place], PlaceAction]] = {}  # выбор среди одноимённых городов
 choice_ids = itertools.count(1)
@@ -60,6 +62,7 @@ BTN_DATE = "📆 Выбрать дату"
 BTN_SUBS = "🔔 Рассылка"
 BTN_PING = "📡 Связь"
 BTN_ALERTS = "⚠️ Предупреждения"
+BTN_SETTINGS = "⚙️ Настройки"
 NO_PLACE = "Напишите название города или нажмите «📍 Моя геолокация»"
 ASK_PLACE = ("Отправьте название города, координаты (например <code>51.18, 32.83</code>) "
              "или геолокацию — добавлю в «Мои места»")
@@ -69,7 +72,7 @@ keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text=BTN_GEO, request_location=True), KeyboardButton(text=BTN_NOW)],
         [KeyboardButton(text=BTN_WEEK), KeyboardButton(text=BTN_DATE)],
         [KeyboardButton(text=BTN_PLACES), KeyboardButton(text=BTN_SUBS), KeyboardButton(text=BTN_ALERTS)],
-        [KeyboardButton(text=BTN_PING), KeyboardButton(text=BTN_HELP)],
+        [KeyboardButton(text=BTN_SETTINGS), KeyboardButton(text=BTN_PING), KeyboardButton(text=BTN_HELP)],
     ],
     resize_keyboard=True,
     is_persistent=True,
@@ -116,6 +119,8 @@ HELP = (
     "• /weekend [город] или 🏖 Выходные — прогноз на ближайшие субботу и воскресенье с советом\n"
     "• /compare или 📊 Сравнить в «Моих местах» — все места в одном сообщении и на одном графике\n"
     "• В сводке на сегодня и на дату есть строка 📈 «как обычно в этот день» — норма за 1991–2020\n\n"
+    f"{BTN_SETTINGS} или /settings — модель прогноза (Авто, ECMWF, ICON, GFS) и источник качества воздуха "
+    "(Open-Meteo, станции WAQI или выключено)\n\n"
     f"{BTN_PING} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
 )
 
@@ -129,10 +134,24 @@ class Input(StatesGroup):
     sub_time = State()  # время рассылки для места из данных состояния
 
 
-MENU_BUTTONS = (BTN_GEO, BTN_NOW, BTN_WEEK, BTN_HELP, BTN_PLACES, BTN_DATE, BTN_SUBS, BTN_PING, BTN_ALERTS)
+MENU_BUTTONS = (BTN_GEO, BTN_NOW, BTN_WEEK, BTN_HELP, BTN_PLACES, BTN_DATE, BTN_SUBS, BTN_PING, BTN_ALERTS,
+                BTN_SETTINGS)
 # Текст, который считается ответом на вопрос бота: не команда и не кнопка меню
 INPUT_TEXT = F.text & ~F.text.startswith("/") & ~F.text.in_(MENU_BUTTONS)
 KEEP_INPUT = {"keep_input": True}  # флаг обработчиков ввода: состояние они ведут сами
+
+
+class CurrentUserMiddleware(BaseMiddleware):
+    """Запоминает, чьё сообщение или кнопка обрабатывается (prefs.current_user): по нему клиент
+    Open-Meteo берёт модель прогноза, а кнопки — источник качества воздуха."""
+
+    async def __call__(self, handler, event, data):
+        user = data.get("event_from_user")
+        token = current_user.set(user.id if user else None)
+        try:
+            return await handler(event, data)
+        finally:
+            current_user.reset(token)
 
 
 class ResetInputMiddleware(BaseMiddleware):
@@ -201,7 +220,9 @@ def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="⏱ По часам", callback_data=f"hr:{place.lat:.3f}:{place.lon:.3f}"),
          InlineKeyboardButton(text="🔔 Подписаться", callback_data=f"sb:{place.lat:.3f}:{place.lon:.3f}")],
         [InlineKeyboardButton(text="🌫 Воздух", callback_data=f"aq:{place.lat:.3f}:{place.lon:.3f}"),
-         InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")],
+         InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")]
+        if prefs.current()["air"] != "off" else  # качество воздуха выключено в /settings
+        [InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")],
         [InlineKeyboardButton(text="⚠️ Предупреждения", callback_data=f"al:new:{place.lat:.3f}:{place.lon:.3f}")],
     ])
 
@@ -282,6 +303,9 @@ async def build_weather(place: Place, days: int, header: str = "", data: dict | 
     if data is None:
         data = await client.fetch(place, days)
     text = header + format_forecast(place.name, data, days)
+    model = prefs.current()["model"]
+    if model != "best_match":
+        text += f"\n<i>Модель прогноза: {model_label(model)}</i>"
     if days == 1:
         line = await norm_line(place, date.fromisoformat(data["daily"]["time"][0]) if data.get("daily") else None,
                                data.get("daily") or {})

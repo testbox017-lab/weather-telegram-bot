@@ -1,7 +1,9 @@
 """Роутер weather: погода сейчас и на неделю, по часам, обновление, воздух, выходные,
 а также общее — /start, /help, выбор среди одноимённых городов, «Отмена» и город текстом.
 Подключается последним: его обработчик текста ловит всё, что не забрали другие роутеры."""
+import asyncio
 import logging
+import os
 from html import escape
 
 from aiogram import F, Router
@@ -10,7 +12,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import core
-from air import format_air
+from air import format_air, format_waqi
 from core import (BTN_HELP, BTN_NOW, BTN_WEEK, HELP, back_markup, choices, drop_prompt, for_city, keyboard, place_name,
                   refresh_weather, reply_for_last, reply_for_place, with_place)
 from places import build_cb, parse_cb
@@ -83,13 +85,32 @@ async def on_cancel(cb: CallbackQuery, state: FSMContext):
 
 
 async def send_air(m: Message, place: Place):
+    """Качество воздуха из источника, выбранного в /settings: Open-Meteo, станция WAQI или выключено."""
+    source = core.prefs.current()["air"]
+    if source == "off":
+        await m.answer("🌫 Качество воздуха выключено. Включить — /settings")
+        return
+    token = os.getenv("WAQI_TOKEN", "").strip()
+    if source == "waqi" and token:
+        station, pollen = await asyncio.gather(core.client.fetch_waqi(place, token), core.client.fetch_air(place),
+                                               return_exceptions=True)
+        if not isinstance(station, Exception):
+            pollen_cur = None if isinstance(pollen, Exception) else (pollen.get("current") or {})
+            await m.answer(format_waqi(escape(place.name), station, place.lat, place.lon, pollen_cur),
+                           reply_markup=back_markup(place))
+            return
+        logging.error("waqi error: %r", station)
+        note = "⚠️ WAQI сейчас не отвечает — показываю данные Open-Meteo.\n\n"
+    else:
+        note = ("⚠️ Для WAQI на сервере не задан токен (WAQI_TOKEN) — показываю данные Open-Meteo.\n\n"
+                if source == "waqi" else "")
     try:
         data = await core.client.fetch_air(place)
     except Exception:
         logging.exception("air error")
         await m.answer("Не удалось получить данные о воздухе, попробуйте чуть позже 🙏")
         return
-    await m.answer(format_air(escape(place.name), data), reply_markup=back_markup(place))
+    await m.answer(note + format_air(escape(place.name), data), reply_markup=back_markup(place))
 
 
 async def send_weekend(m: Message, place: Place):

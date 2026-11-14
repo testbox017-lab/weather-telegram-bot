@@ -14,7 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 import core
-from core import ResetInputMiddleware
+from core import CurrentUserMiddleware, ResetInputMiddleware
 from handlers import dates, places, settings, subs, weather
 from handlers.settings import alert_checker
 from handlers.subs import scheduler
@@ -28,6 +28,7 @@ def build_dispatcher() -> Dispatcher:
     """Диспетчер с роутерами и ожиданием ввода в памяти (как раньше словарь waiting:
     после перезапуска бот забывает, что спрашивал)."""
     dp = Dispatcher(storage=MemoryStorage())
+    dp.update.outer_middleware(CurrentUserMiddleware())
     dp.message.middleware(ResetInputMiddleware())
     dp.include_routers(*ROUTERS)
     return dp
@@ -56,6 +57,7 @@ async def main():
             BotCommand(command="air", description="Качество воздуха и пыльца: /air Город"),
             BotCommand(command="weekend", description="Погода на выходные: /weekend Город"),
             BotCommand(command="compare", description="Сравнить мои места"),
+            BotCommand(command="settings", description="Источник погоды и качества воздуха"),
             BotCommand(command="ping", description="Проверить связь с сервером"),
             BotCommand(command="help", description="Справка"),
         ])
@@ -63,6 +65,7 @@ async def main():
         logging.exception("set_my_commands error")
     async with aiohttp.ClientSession() as session:
         core.client = WeatherClient(session)
+        core.client.model_hook = lambda: core.prefs.current()["model"]
         tasks = [asyncio.create_task(scheduler(bot)), asyncio.create_task(alert_checker(bot))]
         try:
             await dp.start_polling(bot)
