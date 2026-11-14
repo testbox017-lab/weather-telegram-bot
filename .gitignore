@@ -12,3 +12,5 @@ data/
 test_*.png
 python_path.txt
 subscriptions.json
+alerts.json
+.claude/settings.local.json

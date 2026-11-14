@@ -17,6 +17,7 @@ from aiogram.types import (BotCommand, BufferedInputFile, CallbackQuery, InlineK
                            InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, Message,
                            ReplyKeyboardMarkup)
 
+from alerts import ALERT_LIMIT, CHECK_EVERY, KINDS, Alerts, check_all
 from astro import astro_text
 from charts import daily_chart, hourly_chart, wind_humidity_chart
 from dates import (build_cal_cb, build_date_cb, calendar_days, date_source, parse_cal_cb, parse_date,
@@ -49,6 +50,7 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 last_places = LastPlaces(DATA_DIR / "last_places.json")
 saved = Favorites(DATA_DIR / "saved_places.json")
 subs = Subscriptions(DATA_DIR / "subscriptions.json")
+alerts = Alerts(DATA_DIR / "alerts.json")
 waiting: dict[int, tuple[str, Place | None]] = {}  # ждём от пользователя место ("add") или дату ("date")
 PlaceAction = Callable[[Message, Place], Awaitable[None]]
 choices: dict[int, tuple[int, list[Place], PlaceAction]] = {}  # выбор среди одноимённых городов
@@ -62,6 +64,7 @@ BTN_PLACES = "⭐ Мои места"
 BTN_DATE = "📆 Выбрать дату"
 BTN_SUBS = "🔔 Рассылка"
 BTN_PING = "📡 Связь"
+BTN_ALERTS = "⚠️ Предупреждения"
 NO_PLACE = "Напишите название города или нажмите «📍 Моя геолокация»"
 ASK_PLACE = ("Отправьте название города, координаты (например <code>51.18, 32.83</code>) "
              "или геолокацию — добавлю в «Мои места»")
@@ -70,7 +73,7 @@ keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text=BTN_GEO, request_location=True), KeyboardButton(text=BTN_NOW)],
         [KeyboardButton(text=BTN_WEEK), KeyboardButton(text=BTN_DATE)],
-        [KeyboardButton(text=BTN_PLACES), KeyboardButton(text=BTN_SUBS)],
+        [KeyboardButton(text=BTN_PLACES), KeyboardButton(text=BTN_SUBS), KeyboardButton(text=BTN_ALERTS)],
         [KeyboardButton(text=BTN_PING), KeyboardButton(text=BTN_HELP)],
     ],
     resize_keyboard=True,
@@ -107,6 +110,9 @@ HELP = (
     "• добавьте <i>кратко</i> — три строки без графиков (переключается и в /subs)\n"
     "• /subs — ваши рассылки, /unsubscribe <i>номер</i> или <i>all</i> — отключить\n"
     "• 🔔 Подписаться — кнопка под прогнозом\n\n"
+    f"{BTN_ALERTS} или /alerts — бот сам напишет, если ожидается заморозок, гроза, порывы ветра от 15 м/с, "
+    "жара, сильный мороз, резкий перепад температуры или осадки через 1–2 часа (ночью с 23 до 7 молчит). "
+    f"До {ALERT_LIMIT} мест, каждое предупреждение включается отдельно\n\n"
     f"{BTN_PING} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
 )
 
@@ -129,6 +135,7 @@ def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="📆 Другая дата", callback_data=build_cal_cb("f", place.lat, place.lon))],
         [InlineKeyboardButton(text="⏱ По часам", callback_data=f"hr:{place.lat:.3f}:{place.lon:.3f}"),
          InlineKeyboardButton(text="🔔 Подписаться", callback_data=f"sb:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text="⚠️ Предупреждения", callback_data=f"al:new:{place.lat:.3f}:{place.lon:.3f}")],
     ])
 
 
@@ -825,6 +832,128 @@ async def scheduler(bot: Bot, every: float = 30):
         await asyncio.sleep(every)
 
 
+# ---------- Предупреждения ----------
+
+def alert_setup_view(a: dict) -> tuple[str, InlineKeyboardMarkup]:
+    b = InlineKeyboardButton
+    kinds = a.get("kinds", [])
+    rows = [[b(text=f"{'✅' if k in kinds else '▫️'} {label}", callback_data=f"al:t:{a['id']}:{k}")]
+            for k, label in KINDS.items()]
+    rows.append([b(text="🗑 Отключить для места", callback_data=f"al:rm:{a['id']}"),
+                 b(text="↩️ Все места", callback_data="al:list")])
+    on = len(kinds)
+    text = (f"⚠️ Предупреждения для «{escape(a['name'])}»: включено {on} из {len(KINDS)}.\n"
+            "Нажмите, чтобы включить или выключить. Ночью (23–7 по местному времени) бот молчит.")
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def alerts_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
+    items = alerts.list(user_id)
+    rows = [[InlineKeyboardButton(text=f"⚙️ {a['name']} ({len(a.get('kinds', []))}/{len(KINDS)})"[:60],
+                                  callback_data=f"al:open:{a['id']}")] for a in items]
+    rows.append([InlineKeyboardButton(text="➕ Для последнего места", callback_data="al:last")])
+    if not items:
+        return ("⚠️ Предупреждений пока нет. Бот может сам написать, если будет заморозок, гроза, сильный ветер, "
+                "жара, мороз, резкий перепад температуры или скоро пойдёт дождь.\n"
+                "Включите их кнопкой ниже или «⚠️ Предупреждения» под прогнозом."), \
+            InlineKeyboardMarkup(inline_keyboard=rows)
+    return "⚠️ Места с предупреждениями (нажмите, чтобы настроить):", InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def show_alert_setup(m: Message, user_id: int, place: Place):
+    a = alerts.add(user_id, place)
+    if not a:
+        await m.answer(f"Предупреждения уже включены для {ALERT_LIMIT} мест — отключите лишнее в /alerts")
+        return
+    text, markup = alert_setup_view(a)
+    await m.answer(text, reply_markup=markup)
+
+
+@router.message(Command("alerts"))
+async def alerts_cmd(m: Message, command: CommandObject):
+    uid = m.from_user.id
+    waiting.pop(uid, None)
+    query = (command.args or "").strip()
+    if query:
+        await with_place(m, uid, query, lambda target, place: show_alert_setup(target, uid, place))
+        return
+    text, markup = alerts_view(uid)
+    await m.answer(text, reply_markup=markup)
+
+
+@router.message(F.text == BTN_ALERTS)
+async def btn_alerts(m: Message):
+    waiting.pop(m.from_user.id, None)
+    text, markup = alerts_view(m.from_user.id)
+    await m.answer(text, reply_markup=markup)
+
+
+@router.callback_query(F.data.startswith("al:"))
+async def on_alerts_button(cb: CallbackQuery):
+    if not isinstance(cb.message, Message):
+        await cb.answer("Сообщение устарело, откройте /alerts", show_alert=True)
+        return
+    uid, parts = cb.from_user.id, cb.data.split(":")
+    action = parts[1] if len(parts) > 1 else ""
+    try:
+        if action == "new":
+            await cb.answer()
+            lat, lon = float(parts[2]), float(parts[3])
+            await show_alert_setup(cb.message, uid, Place(place_name(uid, lat, lon), lat, lon))
+            return
+        if action == "last":
+            place = last_places.get(uid)
+            await cb.answer()
+            if not place:
+                await cb.message.answer(NO_PLACE, reply_markup=keyboard)
+            else:
+                await show_alert_setup(cb.message, uid, place)
+            return
+        if action == "list":
+            await cb.answer()
+            text, markup = alerts_view(uid)
+        elif action == "rm":
+            removed = alerts.remove(uid, int(parts[2]))
+            await cb.answer(f"Отключено: {removed['name']}" if removed else "Уже отключено")
+            text, markup = alerts_view(uid)
+        else:  # open / t (переключить вид)
+            a = alerts.toggle(uid, int(parts[2]), parts[3]) if action == "t" else alerts.get(uid, int(parts[2]))
+            if not a:
+                await cb.answer("Уже отключено", show_alert=True)
+                return
+            await cb.answer()
+            text, markup = alert_setup_view(a)
+    except (ValueError, IndexError):
+        await cb.answer("Кнопка устарела", show_alert=True)
+        return
+    try:
+        await cb.message.edit_text(text, reply_markup=markup)
+    except Exception:
+        await cb.message.answer(text, reply_markup=markup)
+
+
+async def alert_checker(bot: Bot):
+    """Фоновая проверка предупреждений раз в CHECK_EVERY."""
+    logging.info("alerts started: %d places", len(alerts.all()))
+
+    async def send(uid: int, alert: dict, texts: list[str]):
+        place = Alerts.place(alert)
+        markup = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="🌤 Погода", callback_data=build_cb(1, place.lat, place.lon)),
+            InlineKeyboardButton(text="⚙️ Настроить", callback_data=f"al:open:{alert['id']}")]])
+        await bot.send_message(uid, f"⚠️ <b>{escape(place.name)}</b>\n" + "\n".join(texts), reply_markup=markup)
+
+    while True:
+        try:
+            n = await check_all(alerts, lambda p: client.fetch(p, 2), send, datetime.now(timezone.utc),
+                                (TelegramForbiddenError,))
+            if n:
+                logging.info("alerts: sent %d", n)
+        except Exception:
+            logging.exception("alerts error")
+        await asyncio.sleep(CHECK_EVERY.total_seconds())
+
+
 # ---------- Проверка связи ----------
 
 ping_limiter = health.RateLimiter(10)
@@ -1064,6 +1193,7 @@ async def main():
             BotCommand(command="subscribe", description="Рассылка погоды: /subscribe Город 3ч"),
             BotCommand(command="subs", description="Мои рассылки"),
             BotCommand(command="unsubscribe", description="Отключить рассылку: /unsubscribe номер|all"),
+            BotCommand(command="alerts", description="Предупреждения: заморозок, гроза, ветер"),
             BotCommand(command="ping", description="Проверить связь с сервером"),
             BotCommand(command="help", description="Справка"),
         ])
@@ -1071,11 +1201,12 @@ async def main():
         logging.exception("set_my_commands error")
     async with aiohttp.ClientSession() as session:
         client = WeatherClient(session)
-        task = asyncio.create_task(scheduler(bot))
+        tasks = [asyncio.create_task(scheduler(bot)), asyncio.create_task(alert_checker(bot))]
         try:
             await dp.start_polling(bot)
         finally:
-            task.cancel()
+            for task in tasks:
+                task.cancel()
 
 
 if __name__ == "__main__":
