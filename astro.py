@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from astral import Observer
 from astral.moon import moonrise, moonset, phase
+from astral.sun import dawn, dusk, noon
 
 SYNODIC = 29.530588853  # синодический месяц, сут.
 
@@ -63,6 +64,16 @@ def _moon_event(func, observer: Observer, day: date, tz) -> datetime | None:
         return None
 
 
+def twilight_line(obs: Observer, day: date, tz) -> str | None:
+    """«🌄 Светает с 06:20 · ☀️ Полдень 11:41 · 🌆 Темнеет к 17:05» — гражданские сумерки (солнце на 6° под
+    горизонтом): светло уже без фонарей. Полярной ночью или белыми ночами сумерек нет — строку пропускаем."""
+    try:
+        start, mid, end = dawn(obs, day, tzinfo=tz), noon(obs, day, tzinfo=tz), dusk(obs, day, tzinfo=tz)
+    except ValueError:
+        return None
+    return f"🌄 Светает с {start:%H:%M} · ☀️ Полдень {mid:%H:%M} · 🌆 Темнеет к {end:%H:%M}"
+
+
 def astro_text(lat: float, lon: float, data: dict, next_phases_line: bool = True) -> str:
     """Блок про солнце и луну на день из data["daily"]["time"][0] (по местному времени точки)."""
     tz = timezone(timedelta(seconds=data.get("utc_offset_seconds", 0)))
@@ -80,6 +91,9 @@ def astro_text(lat: float, lon: float, data: dict, next_phases_line: bool = True
         lines.append(line)
 
     obs = Observer(latitude=lat, longitude=lon)
+    twilight = twilight_line(obs, today, tz)
+    if twilight:
+        lines.append(twilight)
     mrise = _moon_event(moonrise, obs, today, tz)
     mset = _moon_event(moonset, obs, today, tz)
     emoji, name, lit = moon_phase(today)

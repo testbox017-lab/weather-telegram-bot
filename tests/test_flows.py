@@ -297,3 +297,18 @@ async def test_handlers_see_current_user_model(tg, monkeypatch):
     core.prefs.set(UID, "model", "gfs_seamless")
     await tg.send(location=(51.18, 32.83))
     assert seen == ["gfs_seamless"]
+
+
+@pytest.mark.asyncio
+async def test_table_button(tg, monkeypatch):
+    from tests.test_table import data as table_data
+
+    asked = []
+
+    async def fetch(place, days):
+        asked.append(days)
+        return table_data()
+
+    monkeypatch.setattr(core.client, "fetch", fetch, raising=False)
+    await tg.press("tb:51.180:32.830")
+    assert asked == [4] and "<pre>" in tg.session.texts()[-1]

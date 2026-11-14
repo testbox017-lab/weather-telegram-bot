@@ -86,9 +86,9 @@ class WeatherClient:
             "longitude": place.lon,
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,"
                        "wind_direction_10m,wind_gusts_10m,pressure_msl,cloud_cover,visibility,uv_index,"
-                       "precipitation,is_day",
+                       "precipitation,is_day,dew_point_2m",
             "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code,"
-                      "wind_speed_10m,wind_gusts_10m,wind_direction_10m,relative_humidity_2m",
+                      "wind_speed_10m,wind_gusts_10m,wind_direction_10m,relative_humidity_2m,dew_point_2m",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
                      "precipitation_sum,sunrise,sunset,daylight_duration,wind_speed_10m_max,"
                      "wind_gusts_10m_max,wind_direction_10m_dominant,relative_humidity_2m_mean,"
@@ -333,6 +333,9 @@ def format_forecast(name: str, data: dict, days: int = 1) -> str:
     tip = clothing(data)
     if tip:
         lines.append(tip)
+    from advice import dew_tips
+
+    lines += dew_tips(data)
     lines += [
         "",
         f"{describe(cur['weather_code'])}",
@@ -341,7 +344,10 @@ def format_forecast(name: str, data: dict, days: int = 1) -> str:
     compare = yesterday_text(data)
     if compare:
         lines.append(compare)
-    lines.append(f"💧 Влажность: {cur['relative_humidity_2m']}%")
+    humidity = f"💧 Влажность: {cur['relative_humidity_2m']}%"
+    if cur.get("dew_point_2m") is not None:
+        humidity += f", точка росы {round(cur['dew_point_2m'])}°"
+    lines.append(humidity)
     wind = f"💨 Ветер: {cur['wind_speed_10m']:.1f} м/с"
     direction = wind_dir(cur.get("wind_direction_10m"))
     if direction:

@@ -56,6 +56,7 @@ async def main():
             BotCommand(command="alerts", description="Предупреждения: заморозок, гроза, ветер"),
             BotCommand(command="air", description="Качество воздуха и пыльца: /air Город"),
             BotCommand(command="weekend", description="Погода на выходные: /weekend Город"),
+            BotCommand(command="table", description="3 дня таблицей: /table Город"),
             BotCommand(command="compare", description="Сравнить мои места"),
             BotCommand(command="settings", description="Источник погоды и качества воздуха"),
             BotCommand(command="ping", description="Проверить связь с сервером"),
