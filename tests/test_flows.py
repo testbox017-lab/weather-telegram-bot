@@ -12,7 +12,7 @@ os.environ.setdefault("DATA_DIR", tempfile.mkdtemp())
 from aiogram import Bot  # noqa: E402
 from aiogram.client.session.base import BaseSession  # noqa: E402
 from aiogram.fsm.storage.memory import MemoryStorage  # noqa: E402
-from aiogram.methods import GetMe, SendMediaGroup  # noqa: E402
+from aiogram.methods import EditMessageReplyMarkup, EditMessageText, GetMe, SendMediaGroup  # noqa: E402
 from aiogram.types import CallbackQuery, Chat, Location, Message, Update, User  # noqa: E402
 
 import bot as entry  # noqa: E402
@@ -208,3 +208,48 @@ async def test_custom_subscription_time(tg):
     items = core.subs.list(UID)
     assert len(items) == 1 and items[0]["sched"]["times"] == ["07:30"]
     assert "Рассылка включена" in tg.session.texts()[-1] and await tg.state() is None
+
+
+@pytest.mark.asyncio
+async def test_retry_removes_old_cancel_button(tg, recorded):
+    await tg.press(build_cal_cb("i", 51.18, 32.83))
+    first = tg.session._id  # «Напишите дату» с кнопкой «Отмена»
+    await tg.send("абв")
+    await tg.send("21.11")
+    dropped = [c.message_id for c in tg.session.calls if isinstance(c, EditMessageReplyMarkup)]
+    assert len(dropped) == 2 and dropped[0] == first < dropped[1]  # первый вопрос, потом повторный
+
+
+@pytest.mark.asyncio
+async def test_menu_button_drops_prompt(tg, recorded):
+    await tg.send("/add")
+    await tg.send(BTN_NOW)
+    assert any(isinstance(c, EditMessageReplyMarkup) for c in tg.session.calls)
+
+
+@pytest.mark.asyncio
+async def test_delete_place_asks_confirmation(tg):
+    core.saved.add(UID, BAKHMACH)
+    await tg.press("pl:ask:0")
+    ask = [c for c in tg.session.calls if isinstance(c, EditMessageText)][-1]
+    assert "Удалить «Бахмач" in ask.text and core.saved.list(UID)
+    await tg.press("pl:rm:0")
+    assert not core.saved.list(UID)
+
+
+@pytest.mark.asyncio
+async def test_new_subscription_asks_place(tg):
+    core.saved.add(UID, BAKHMACH)
+    core.saved.add(UID, Place("Нежин, Черниговская область, Украина", 51.05, 31.89))
+    await tg.press("su:new")
+    assert "Для какого места" in tg.session.texts()[-1]
+    buttons = [b.text for row in tg.session.calls[-1].reply_markup.inline_keyboard for b in row]
+    assert any("Бахмач" in t for t in buttons) and any("Нежин" in t for t in buttons)
+
+
+@pytest.mark.asyncio
+async def test_subs_buttons_use_short_names(tg):
+    core.subs.add(UID, BAKHMACH, {"hours": 12}, "Europe/Kyiv", datetime.now(timezone.utc))
+    await tg.send("/subs")
+    buttons = [b.text for row in tg.session.calls[-1].reply_markup.inline_keyboard for b in row]
+    assert "❌ 1. Бахмач — каждые 12 ч" in buttons

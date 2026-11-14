@@ -11,7 +11,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 import core
 from air import format_air
-from core import (BTN_HELP, BTN_NOW, BTN_WEEK, HELP, back_markup, choices, for_city, keyboard, place_name,
+from core import (BTN_HELP, BTN_NOW, BTN_WEEK, HELP, back_markup, choices, drop_prompt, for_city, keyboard, place_name,
                   refresh_weather, reply_for_last, reply_for_place, with_place)
 from places import build_cb, parse_cb
 from weather import Place, format_hourly
@@ -69,6 +69,8 @@ async def reply_for_city(m: Message, query: str, days: int):
 
 @router.callback_query(F.data == "x")
 async def on_cancel(cb: CallbackQuery, state: FSMContext):
+    if isinstance(cb.message, Message) and (await state.get_data()).get("prompt") != cb.message.message_id:
+        await drop_prompt(cb.bot, cb.message.chat.id, state)  # «Отмена» под более старым вопросом
     await state.clear()
     choices.pop(cb.from_user.id, None)
     await cb.answer("Отменено")
@@ -92,7 +94,7 @@ async def send_air(m: Message, place: Place):
 
 async def send_weekend(m: Message, place: Place):
     try:
-        data = await core.client.fetch(place, 7)
+        data = await core.client.fetch(place, 9)  # в воскресенье вечером нужен и следующий уикенд
     except Exception:
         logging.exception("weekend error")
         await m.answer("Не удалось получить прогноз, попробуйте чуть позже 🙏")

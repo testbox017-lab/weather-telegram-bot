@@ -83,7 +83,7 @@ def test_storage_due_advance_and_persist(tmp_path):
 def test_missed_run_sent_once(tmp_path):
     s = Subscriptions(tmp_path / "s.json")
     s.add(1, P, {"hours": 1}, "UTC", NOW)
-    down_until = NOW + timedelta(hours=10)  # бот был выключен 10 часов
+    down_until = NOW + timedelta(hours=5)  # бот был выключен 5 часов
     sent = []
 
     async def send(uid, sub):
@@ -201,3 +201,28 @@ async def test_condition_stored_and_distinct(tmp_path):
     a = s.add(1, P, {"times": ["07:00"]}, "Europe/Kyiv", NOW, cond="precip")
     b = s.add(1, P, {"times": ["07:00"]}, "Europe/Kyiv", NOW)
     assert a["cond"] == "precip" and "cond" not in b and len(s.list(1)) == 2
+
+
+def test_interval_skips_night():
+    """«Каждые N ч» не приходят с 23 до 7 по местному времени: перенос на 07:00."""
+    evening = datetime(2026, 11, 14, 18, 0, tzinfo=UTC)  # 20:00 в Киеве
+    assert next_run({"hours": 3}, evening, "Europe/Kyiv") == datetime(2026, 11, 15, 5, 0, tzinfo=UTC)
+    assert next_run({"hours": 1}, evening, "Europe/Kyiv") == evening + timedelta(hours=1)  # 21:00 — можно
+    night = datetime(2026, 11, 14, 22, 30, tzinfo=UTC)  # 00:30 в Киеве
+    assert next_run({"hours": 12}, night, "Europe/Kyiv") == datetime(2026, 11, 15, 10, 30, tzinfo=UTC)
+    assert next_run({"hours": 1}, night, "Europe/Kyiv") == datetime(2026, 11, 15, 5, 0, tzinfo=UTC)
+
+
+def test_night_run_postponed_to_morning(tmp_path):
+    """Старая запись с отправкой на 03:08 ночью не будит, а переносится на 07:00."""
+    s = Subscriptions(tmp_path / "s.json")
+    s.add(1, P, {"hours": 12}, "Europe/Kyiv", NOW)
+    night = datetime(2026, 11, 15, 1, 8, tzinfo=UTC)  # 03:08 в Киеве
+    s._data["1"][0]["next"] = night.isoformat()
+    sent = []
+
+    async def send(uid, sub):
+        sent.append(uid)
+
+    assert asyncio.run(run_due(s, night, send, pause=0)) == 0 and not sent
+    assert s.list(1)[0]["next"] == datetime(2026, 11, 15, 5, 0, tzinfo=UTC).isoformat()

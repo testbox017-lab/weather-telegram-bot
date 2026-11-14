@@ -12,7 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 import core
 from astro import astro_text
 from charts import hourly_chart, wind_humidity_chart
-from core import (BTN_DATE, INPUT_TEXT, KEEP_INPUT, NO_PLACE, Input, cancel_markup, keyboard, last_places,
+from core import (BTN_DATE, INPUT_TEXT, KEEP_INPUT, NO_PLACE, Input, drop_prompt, keyboard, last_places, send_prompt,
                   norm_line, place_data, place_from, place_name, send_album, with_place)
 from dates import (build_cal_cb, build_date_cb, calendar_days, date_source, parse_cal_cb, parse_date,
                    parse_date_cb, source_error, split_date_args)
@@ -132,8 +132,8 @@ async def on_calendar_button(cb: CallbackQuery, state: FSMContext):
     if page == "i":
         await state.set_state(Input.date)
         await state.set_data(place_data(place))
-        await cb.message.answer("Напишите дату: <code>21.11</code>, <code>21.11.2026</code>, "
-                                "<code>завтра</code> или <code>вчера</code>", reply_markup=cancel_markup())
+        await send_prompt(cb.message, state, "Напишите дату: <code>21.11</code>, <code>21.11.2026</code>, "
+                                             "<code>завтра</code> или <code>вчера</code>")
         return
     title = "Прошлые дни" if page == "p" else "Выберите дату"
     try:
@@ -162,8 +162,8 @@ async def date_input(m: Message, state: FSMContext):
     place = place_from(await state.get_data())
     day = parse_date(m.text, date.today())
     if not day:  # состояние остаётся — можно попробовать ещё раз
-        await m.answer("Не понял дату, попробуйте так: <code>21.11</code> или <code>21.11.2026</code>",
-                       reply_markup=cancel_markup())
+        await send_prompt(m, state, "Не понял дату, попробуйте так: <code>21.11</code> или <code>21.11.2026</code>")
         return
+    await drop_prompt(m.bot, m.chat.id, state)
     await state.clear()
     await send_day(m, place, day, m.from_user.id)

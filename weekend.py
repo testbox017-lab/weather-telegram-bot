@@ -14,10 +14,15 @@ def _deg(t: float) -> str:
     return f"+{t}" if t > 0 else ("−" + str(-t) if t < 0 else "0")
 
 
-def weekend_indices(days: list[str]) -> list[int]:
-    """Индексы ближайших субботы и воскресенья (в воскресенье — только сегодня)."""
+EVENING = 18  # с этого часа сегодняшний день выходных уже не показываем
+
+
+def weekend_indices(days: list[str], start: int = 0) -> list[int]:
+    """Индексы ближайших субботы и воскресенья начиная с days[start] (в воскресенье — только сегодня)."""
     out = []
     for i, d in enumerate(days):
+        if i < start:
+            continue
         wd = date.fromisoformat(d).weekday()
         if wd in (5, 6):
             out.append(i)
@@ -45,8 +50,16 @@ def verdict(code: int | None, prob: int | None, wind: float | None, tmax: float 
 
 def format_weekend(name: str, data: dict) -> str:
     d = data.get("daily") or {}
-    idx = weekend_indices(d.get("time") or [])
+    times = d.get("time") or []
+    now = (data.get("current") or {}).get("time", "")  # местное время места
+    today = now[:10] or date.today().isoformat()
+    late = len(now) >= 13 and int(now[11:13]) >= EVENING
+    idx = weekend_indices(times)
     lines = [f"🏖 <b>Выходные — {name}</b>", ""]
+    if late and idx and times[idx[0]] == today:  # вечером сегодняшний день почти прошёл
+        idx = idx[1:] or weekend_indices(times, idx[0] + 1)
+        lines += ["🌙 Сегодня уже вечер — показываю " + ("завтра." if len(idx) == 1 and idx[0] == 1
+                                                        else "следующие выходные."), ""]
     if not idx:
         return "\n".join(lines + ["Нет прогноза на выходные 🤷"])
 
@@ -59,7 +72,7 @@ def format_weekend(name: str, data: dict) -> str:
         code, hi, lo = col("weather_code", i), col("temperature_2m_max", i), col("temperature_2m_min", i)
         prob, rain, wind = col("precipitation_probability_max", i), col("precipitation_sum", i), \
             col("wind_speed_10m_max", i)
-        title = "сегодня" if day == date.today() else f"{day:%d.%m}"
+        title = "сегодня" if d["time"][i] == today else f"{day:%d.%m}"
         lines.append(f"<b>{['Суббота', 'Воскресенье'][day.weekday() - 5]}, {title}</b>")
         if code is not None:
             lines.append(describe(code))
