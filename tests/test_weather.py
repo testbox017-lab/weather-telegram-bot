@@ -25,8 +25,8 @@ class FakeClient(WeatherClient):
         self.responses = responses
         self.calls = []
 
-    async def _get(self, url, params):
-        self.calls.append((url, params))
+    async def _get(self, url, params, **kw):
+        self.calls.append((url, params, kw))
         return self.responses.pop(0)
 
 
@@ -40,7 +40,26 @@ async def test_find_city():
 
 @pytest.mark.asyncio
 async def test_city_not_found():
-    assert await FakeClient([{}]).find_city("Абырвалг") is None
+    c = FakeClient([{}, []])
+    assert await c.find_city("Абырвалг") is None
+    assert "nominatim" in c.calls[1][0] and "MyWeatherOpenMeteobot" in c.calls[1][2]["headers"]["User-Agent"]
+
+
+@pytest.mark.asyncio
+async def test_osm_fallback_finds_mountain():
+    c = FakeClient([{}, [{"lat": "48.1602", "lon": "24.5002", "name": "Говерла", "category": "natural",
+                         "type": "peak", "display_name": "Говерла, Ворохтянская поселковая громада, "
+                                                         "Надворнянский район, Ивано-Франковская область, Украина"}]])
+    places, obvious = await c.find_cities("Говерла")
+    assert obvious and places == [Place("Говерла (вершина), Ивано-Франковская область, Украина", 48.1602, 24.5002)]
+    assert c.calls[1][1]["q"] == "Говерла" and c.calls[1][1]["accept-language"] == "ru"
+
+
+@pytest.mark.asyncio
+async def test_osm_not_asked_when_city_found():
+    c = FakeClient([{"results": [{"name": "Бахмач", "country": "Украина", "latitude": 51.18, "longitude": 32.83}]}])
+    places, _ = await c.find_cities("Бахмач")
+    assert places and len(c.calls) == 1
 
 
 @pytest.mark.asyncio

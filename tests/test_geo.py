@@ -101,3 +101,20 @@ async def test_find_cities_sends_name_without_hint():
     places, obvious = await c.find_cities("Бахмач, Сумская")
     assert c.params["name"] == "Бахмач" and c.params["count"] > 1
     assert obvious and places[0].name == "Бахмач, Сумская область, Украина"
+
+
+def test_osm_candidates_labels_and_dedup():
+    from geo import osm_candidates
+
+    rows = [
+        {"lat": "51.18", "lon": "32.82", "name": "Бахмач-Пассажирский", "type": "station",
+         "display_name": "Бахмач-Пассажирский, улица Вокзальная, Бахмач, Черниговская область, 16500, Украина"},
+        {"lat": "51.181", "lon": "32.821", "name": "Бахмач-Пассажирский", "type": "station",
+         "display_name": "дубль"},
+        {"lat": "50.45", "lon": "30.52", "name": "", "type": "city", "display_name": "Киев, Украина"},
+        {"lat": "bad"},
+    ]
+    places, obvious = osm_candidates(rows)
+    assert [p.name for p in places] == ["Бахмач-Пассажирский (станция), Черниговская область, Украина",
+                                        "Киев, Украина"]
+    assert not obvious

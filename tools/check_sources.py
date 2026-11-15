@@ -92,6 +92,21 @@ async def main():
                 if model == "best_match":
                     print("  --- таблица ---\n  " + format_table("X", d7).replace("\n", "\n  "))
 
+        print("\n=== поиск мест (Open-Meteo, затем OpenStreetMap) ===")
+        for q in ("Бахмач", "Говерла", "озеро Свитязь", "Бахмач-Пассажирский", "Эльбрус", "Абырвалгск"):
+            try:
+                places, obvious = await client.find_cities(q)
+                shown = "; ".join(f"{p.name} ({p.lat:.3f}, {p.lon:.3f})" for p in places[:3]) or "не найдено"
+                print(f"  {q!r}: {'сразу' if obvious else len(places)} → {shown}")
+            except Exception as e:
+                failed += 1
+                print(f"  FAIL {q!r}: {type(e).__name__}: {e}")
+        client.model_hook = lambda: None
+        d1 = await client.fetch(place, 1)
+        print("\n=== краткая сводка: все поля ===")
+        from weather import SHORT_FIELDS
+        print("  " + format_short("X", d1, list(SHORT_FIELDS)).replace("\n", "\n  "))
+
         print("\n=== air ===")
         try:
             format_air("X", await client.fetch_air(place))

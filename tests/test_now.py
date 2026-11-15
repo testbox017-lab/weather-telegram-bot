@@ -97,3 +97,14 @@ def test_short_format():
     lines = format_short("Бахмач", d).splitlines()
     assert lines == ["📍 <b>Бахмач</b>: ☁️ Пасмурно, 5°C (ощущается 2°), 💨 4 м/с",
                      "🌂 Без осадков ближайшие 9 ч", "Сегодня 1…7°C, ☔️ 20%"]
+
+
+def test_short_format_fields():
+    from weather import format_short
+    d = data(wind_speed_10m=3.6)
+    d["current"].update(relative_humidity_2m=88, pressure_msl=1020)
+    d["daily"] = {"time": ["2026-11-14"], "temperature_2m_min": [1.2], "temperature_2m_max": [7.4],
+                  "precipitation_probability_max": [20]}
+    assert format_short("Бахмач", d, ["humidity", "pressure"]) == "📍 <b>Бахмач</b>: 💧 88%, 🧭 765 мм"
+    text = format_short("Бахмач", d, ["feels", "today", "advice"])
+    assert text.splitlines()[0] == "📍 <b>Бахмач</b>: ощущается 2°" and "Сегодня 1…7°C" in text and "👕" in text

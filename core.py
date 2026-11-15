@@ -120,8 +120,9 @@ HELP = (
     "• /table [город] или 📋 Таблица — 3 дня текстом: утро, день, вечер и ночь\n"
     "• /compare или 📊 Сравнить в «Моих местах» — все места в одном сообщении и на одном графике\n"
     "• В сводке на сегодня и на дату есть строка 📈 «как обычно в этот день» — норма за 1991–2020\n\n"
-    f"{BTN_SETTINGS} или /settings — модель прогноза (Авто, ECMWF, ICON, GFS) и источник качества воздуха "
-    "(Open-Meteo, станции WAQI или выключено)\n\n"
+    "Кроме городов можно искать горы, станции, озёра и достопримечательности: «Говерла», «озеро Свитязь»\n\n"
+    f"{BTN_SETTINGS} или /settings — модель прогноза (Авто, ECMWF, ICON, GFS), источник качества воздуха "
+    "(Open-Meteo, станции WAQI или выключено) и что показывать в краткой сводке рассылок\n\n"
     f"{BTN_PING} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
 )
 
@@ -397,7 +398,7 @@ async def with_place(m: Message, user_id: int, query: str, action: PlaceAction) 
         await m.answer("Не удалось найти место, попробуйте чуть позже 🙏")
         return False
     if not places:
-        await m.answer(f"Не нашёл город «{escape(query)}» 🤷 Проверьте написание.")
+        await m.answer(f"Не нашёл «{escape(query)}» ни среди городов, ни на карте OpenStreetMap 🤷 Проверьте написание.")
         return False
     if obvious:
         await action(m, places[0])
