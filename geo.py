@@ -66,3 +66,39 @@ def candidates(results: list[dict], query: str) -> tuple[list[Place], bool]:
     top, rest = pops[0], max(pops[1:])
     obvious = top >= BIG_CITY and top >= BIG_RATIO * max(rest, 1)
     return places, obvious
+
+
+# Тип объекта OpenStreetMap → подпись в скобках (города и сёла подписи не получают)
+OSM_KINDS = {
+    "peak": "вершина", "volcano": "вулкан", "mountain_range": "горы", "ridge": "хребет", "saddle": "перевал",
+    "station": "станция", "halt": "станция", "stop": "остановка", "aerodrome": "аэропорт",
+    "lake": "озеро", "reservoir": "водохранилище", "water": "водоём", "river": "река", "bay": "залив",
+    "beach": "пляж", "island": "остров", "forest": "лес", "wood": "лес", "park": "парк",
+    "nature_reserve": "заповедник", "national_park": "нацпарк", "attraction": "достопримечательность",
+    "museum": "музей", "castle": "замок", "monument": "памятник", "viewpoint": "смотровая площадка",
+    "camp_site": "кемпинг", "alpine_hut": "приют", "ski": "горнолыжный курорт",
+}
+
+
+def osm_candidates(results: list[dict]) -> tuple[list[Place], bool]:
+    """Варианты из Nominatim: «Говерла (вершина), Ивано-Франковская область, Украина»."""
+    places, seen = [], set()
+    for r in results or []:
+        try:
+            lat, lon = float(r["lat"]), float(r["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        key = (round(lat, 2), round(lon, 2))
+        if key in seen:
+            continue
+        seen.add(key)
+        parts = [p.strip() for p in (r.get("display_name") or "").split(",") if p.strip()]
+        parts = [p for p in parts if not p.replace(" ", "").replace("-", "").isdigit()]  # без почтовых индексов
+        name = r.get("name") or (parts[0] if parts else f"{lat:.2f}, {lon:.2f}")
+        kind = OSM_KINDS.get(r.get("type")) or OSM_KINDS.get(r.get("category"))
+        tail = [p for p in parts[1:] if p != name][-2:]  # область и страна
+        label = ", ".join([f"{name} ({kind})" if kind else name] + tail)
+        places.append(Place(label, lat, lon))
+        if len(places) >= MAX_CHOICES:
+            break
+    return places, len(places) == 1

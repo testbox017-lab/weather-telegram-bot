@@ -18,6 +18,7 @@ from alerts import ALERT_LIMIT, CHECK_EVERY, KINDS, Alerts, check_all
 from core import (BTN_ALERTS, BTN_PING, BTN_SETTINGS, NO_PLACE, alerts, keyboard, last_places, place_name, prefs, subs,
                   with_place)
 from prefs import AIR_SOURCES, MODELS
+from weather import SHORT_FIELDS
 from places import build_cb
 from weather import ARCHIVE_URL, FORECAST_URL, GEO_URL, Place
 
@@ -42,6 +43,11 @@ def settings_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         lines.append(f"{'✅' if mark else '▫️'} <b>{title}</b> — {about}")
         air_row.append(b(text=f"{mark}{title.split(' · ')[0]}", callback_data=f"cfg:air:{key}"))
     rows.append(air_row)
+    lines += ["", "<b>КРАТКАЯ СВОДКА</b> (рассылки «кратко»): "
+              + ", ".join(SHORT_FIELDS[f].lower() for f in p["short"])]
+    short_buttons = [b(text=f"{'✅' if f in p['short'] else '▫️'} {title}", callback_data=f"cfg:short:{f}")
+                     for f, title in SHORT_FIELDS.items()]
+    rows += [short_buttons[i:i + 2] for i in range(0, len(short_buttons), 2)]
     if p["air"] == "waqi" and not os.getenv("WAQI_TOKEN", "").strip():
         lines += ["", "⚠️ Для WAQI на сервере пока не задан токен — до этого показываю Open-Meteo."]
     lines += ["", "Нажмите, чтобы выбрать. Настройка действует на прогнозы, рассылки и предупреждения."]
@@ -62,11 +68,18 @@ async def btn_settings(m: Message):
 @router.callback_query(F.data.startswith("cfg:"))
 async def on_settings_button(cb: CallbackQuery):
     _, key, value = (cb.data.split(":") + ["", ""])[:3]
-    if not prefs.set(cb.from_user.id, key, value):
+    if key == "short":
+        if not prefs.toggle_short(cb.from_user.id, value):
+            await cb.answer("Хотя бы одно поле должно остаться" if value in SHORT_FIELDS else "Кнопка устарела",
+                            show_alert=True)
+            return
+        on = value in prefs.get(cb.from_user.id)["short"]
+        await cb.answer(f"{SHORT_FIELDS[value]}: {'показывать' if on else 'не показывать'}")
+    elif not prefs.set(cb.from_user.id, key, value):
         await cb.answer("Кнопка устарела", show_alert=True)
         return
-    title = (MODELS if key == "model" else AIR_SOURCES)[value][0]
-    await cb.answer(f"Выбрано: {title}")
+    else:
+        await cb.answer(f"Выбрано: {(MODELS if key == 'model' else AIR_SOURCES)[value][0]}")
     if isinstance(cb.message, Message):
         text, markup = settings_view(cb.from_user.id)
         try:

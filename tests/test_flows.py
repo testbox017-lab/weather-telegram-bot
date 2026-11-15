@@ -262,7 +262,8 @@ async def test_settings_choose_model_and_air(tg):
     assert "✅ <b>Авто</b>" in tg.session.texts()[-1]
     await tg.press("cfg:model:ecmwf_ifs025")
     await tg.press("cfg:air:off")
-    assert core.prefs.get(UID) == {"model": "ecmwf_ifs025", "air": "off"}
+    p = core.prefs.get(UID)
+    assert (p["model"], p["air"]) == ("ecmwf_ifs025", "off")
     edited = [c for c in tg.session.calls if isinstance(c, EditMessageText)][-1]
     assert "✅ <b>ECMWF</b>" in edited.text and "✅ <b>Выключено</b>" in edited.text
     await tg.press("cfg:model:nonsense")
@@ -312,3 +313,11 @@ async def test_table_button(tg, monkeypatch):
     monkeypatch.setattr(core.client, "fetch", fetch, raising=False)
     await tg.press("tb:51.180:32.830")
     assert asked == [4] and "<pre>" in tg.session.texts()[-1]
+
+
+@pytest.mark.asyncio
+async def test_settings_short_fields(tg):
+    await tg.press("cfg:short:pressure")
+    assert "pressure" in core.prefs.get(UID)["short"]
+    edited = [c for c in tg.session.calls if isinstance(c, EditMessageText)][-1]
+    assert "✅ Давление" in [b.text for row in edited.reply_markup.inline_keyboard for b in row]

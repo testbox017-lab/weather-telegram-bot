@@ -289,7 +289,8 @@ async def scheduler(bot: Bot, every: float = 30):
         if sub.get("short"):
             more = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
                 text="📊 Подробно", callback_data=build_cb(1, place.lat, place.lon))]])
-            await bot.send_message(uid, "🔔 " + format_short(escape(place.name), data), reply_markup=more)
+            fields = core.prefs.get(uid)["short"]
+            await bot.send_message(uid, "🔔 " + format_short(escape(place.name), data, fields), reply_markup=more)
             return
         await send_weather(ChatTarget(bot, uid), place, 1,
                            header=f"🔔 <b>Рассылка:</b> {sub_text(sub)}\n", data=data)

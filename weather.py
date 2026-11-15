@@ -5,6 +5,10 @@ from dataclasses import dataclass
 import aiohttp
 
 GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
+# OpenStreetMap: горы, станции, озёра, достопримечательности — когда геокодер Open-Meteo городов не нашёл.
+# Правила Nominatim: свой User-Agent и не чаще запроса в секунду.
+NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_UA = "MyWeatherOpenMeteobot/1.0 (personal Telegram weather bot; github.com/testbox017-lab/weather-telegram-bot)"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 WMO = {
@@ -45,10 +49,12 @@ class WeatherClient:
 
     retry_delays = (1.0, 3.0)  # повторы при временных сбоях Open-Meteo (5xx, таймаут, обрыв связи)
 
-    async def _get(self, url: str, params: dict, timeout: float = 10) -> dict:
+    async def _get(self, url: str, params: dict, timeout: float = 10, headers: dict | None = None) -> dict:
         for attempt in range(len(self.retry_delays) + 1):
             try:
-                async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
+                extra = {"headers": headers} if headers else {}
+                async with self.session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=timeout),
+                                            **extra) as r:
                     r.raise_for_status()
                     return await r.json()
             except (aiohttp.ClientResponseError, aiohttp.ClientConnectionError, asyncio.TimeoutError) as e:
@@ -70,7 +76,36 @@ class WeatherClient:
 
         name = split_query(query)[0] or query
         data = await self._get(GEO_URL, {"name": name, "count": 20, "language": "ru", "format": "json"})
-        return candidates(data.get("results") or [], query)
+        found = candidates(data.get("results") or [], query)
+        if found[0]:
+            return found
+        try:
+            return await self.find_osm(query)
+        except Exception:  # OSM недоступен — как будто не нашли
+            import logging
+
+            logging.exception("nominatim error")
+            return [], False
+
+    _osm_lock = asyncio.Lock()
+    _osm_last = 0.0
+
+    async def find_osm(self, query: str) -> tuple[list[Place], bool]:
+        """Поиск по OpenStreetMap (Nominatim): «Говерла», «вокзал Бахмач», «озеро Свитязь»."""
+        from geo import MAX_CHOICES, osm_candidates
+
+        async with WeatherClient._osm_lock:  # не чаще раза в секунду на весь бот
+            loop = asyncio.get_running_loop()
+            wait = WeatherClient._osm_last + 1.0 - loop.time()
+            if wait > 0:
+                await asyncio.sleep(wait)
+            try:
+                data = await self._get(NOMINATIM_URL, {"q": query, "format": "jsonv2", "limit": MAX_CHOICES,
+                                                       "accept-language": "ru"},
+                                       headers={"User-Agent": NOMINATIM_UA})
+            finally:
+                WeatherClient._osm_last = loop.time()
+        return osm_candidates(data if isinstance(data, list) else [])
 
     async def forecast(self, place: Place, days: int = 1) -> str:
         return format_forecast(place.name, await self.fetch(place, days), days)
@@ -392,20 +427,53 @@ def format_forecast(name: str, data: dict, days: int = 1) -> str:
     return "\n".join(lines)
 
 
-def format_short(name: str, data: dict) -> str:
-    """Краткая сводка в три строки (для частых рассылок)."""
+# Что можно показать в краткой сводке (выбирается в /settings); по умолчанию — как было раньше
+SHORT_FIELDS = {
+    "now": "Погода и температура",
+    "feels": "Ощущается",
+    "wind": "Ветер",
+    "humidity": "Влажность",
+    "pressure": "Давление",
+    "rain": "Осадки на 12 ч",
+    "today": "Сегодня мин…макс",
+    "advice": "Что надеть",
+}
+SHORT_DEFAULT = ["now", "feels", "wind", "rain", "today"]
+
+
+def format_short(name: str, data: dict, fields: list[str] | None = None) -> str:
+    """Краткая сводка в несколько строк (для частых рассылок); fields — какие части показать."""
+    on = set(SHORT_DEFAULT if fields is None else fields)
     cur = data["current"]
-    line1 = (f"📍 <b>{name}</b>: {describe(cur['weather_code'])}, {round(cur['temperature_2m'])}°C "
-             f"(ощущается {round(cur['apparent_temperature'])}°), 💨 {cur['wind_speed_10m']:.0f} м/с")
-    lines = [line1]
-    outlook = rain_outlook(data)
-    if outlook:
-        lines.append(outlook)
+    parts = []
+    feels = cur.get("apparent_temperature") if "feels" in on else None
+    if "now" in on:
+        now = f"{describe(cur['weather_code'])}, {round(cur['temperature_2m'])}°C"
+        parts.append(now + (f" (ощущается {round(feels)}°)" if feels is not None else ""))
+    elif feels is not None:
+        parts.append(f"ощущается {round(feels)}°")
+    if "wind" in on and cur.get("wind_speed_10m") is not None:
+        parts.append(f"💨 {cur['wind_speed_10m']:.0f} м/с")
+    if "humidity" in on and cur.get("relative_humidity_2m") is not None:
+        parts.append(f"💧 {cur['relative_humidity_2m']}%")
+    if "pressure" in on and cur.get("pressure_msl") is not None:
+        parts.append(f"🧭 {round(cur['pressure_msl'] * 0.750062)} мм")
+    lines = [f"📍 <b>{name}</b>" + (": " + ", ".join(parts) if parts else "")]
+    if "rain" in on:
+        outlook = rain_outlook(data)
+        if outlook:
+            lines.append(outlook)
     d = data.get("daily") or {}
     tmin, tmax = _first(d, "temperature_2m_min"), _first(d, "temperature_2m_max")
-    if tmin is not None and tmax is not None:
+    if "today" in on and tmin is not None and tmax is not None:
         prob = _first(d, "precipitation_probability_max")
         lines.append(f"Сегодня {round(tmin)}…{round(tmax)}°C" + (f", ☔️ {prob}%" if prob is not None else ""))
+    if "advice" in on:
+        from advice import clothing
+
+        tip = clothing(data)
+        if tip:
+            lines.append(tip)
     return "\n".join(lines)
 
 
