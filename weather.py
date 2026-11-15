@@ -91,8 +91,21 @@ class WeatherClient:
     _osm_last = 0.0
 
     async def find_osm(self, query: str) -> tuple[list[Place], bool]:
-        """Поиск по OpenStreetMap (Nominatim): «Говерла», «вокзал Бахмач», «озеро Свитязь»."""
-        from geo import MAX_CHOICES, osm_candidates
+        """Поиск по OpenStreetMap (Nominatim): «Говерла», «вокзал Бахмач», «озеро Свитязь».
+
+        В OSM слово «озеро» или «гора» часто не входит в название (украинское озеро — просто «Світязь»),
+        поэтому, если нашлось меньше двух вариантов, ищем ещё раз без такого слова и показываем все.
+        """
+        from geo import osm_candidates, strip_kind_word
+
+        rows = await self._nominatim(query)
+        bare = strip_kind_word(query)
+        if bare and len(osm_candidates(rows)[0]) < 2:
+            rows += await self._nominatim(bare)
+        return osm_candidates(rows)
+
+    async def _nominatim(self, query: str) -> list:
+        from geo import MAX_CHOICES
 
         async with WeatherClient._osm_lock:  # не чаще раза в секунду на весь бот
             loop = asyncio.get_running_loop()
@@ -105,7 +118,7 @@ class WeatherClient:
                                        headers={"User-Agent": NOMINATIM_UA})
             finally:
                 WeatherClient._osm_last = loop.time()
-        return osm_candidates(data if isinstance(data, list) else [])
+        return data if isinstance(data, list) else []
 
     async def forecast(self, place: Place, days: int = 1) -> str:
         return format_forecast(place.name, await self.fetch(place, days), days)

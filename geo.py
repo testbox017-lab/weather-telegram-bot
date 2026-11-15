@@ -102,3 +102,14 @@ def osm_candidates(results: list[dict]) -> tuple[list[Place], bool]:
         if len(places) >= MAX_CHOICES:
             break
     return places, len(places) == 1
+
+
+KIND_WORDS = {"озеро", "оз", "гора", "г", "река", "р", "вокзал", "станция", "ст", "пик", "вершина", "перевал",
+              "водохранилище", "остров", "парк", "замок", "музей", "пляж", "лес"}
+
+
+def strip_kind_word(query: str) -> str | None:
+    """«озеро Свитязь» → «Свитязь»; None, если в запросе нет такого слова."""
+    words = (query or "").split()
+    rest = [w for w in words if w.casefold().rstrip(".") not in KIND_WORDS]
+    return " ".join(rest) if rest and len(rest) < len(words) else None

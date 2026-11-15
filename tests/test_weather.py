@@ -131,3 +131,17 @@ async def test_no_retry_on_400_and_gives_up():
     with pytest.raises(aiohttp.ClientResponseError):
         await c._get("u", {})
     assert s.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_osm_retries_without_kind_word():
+    belarus = {"lat": "53.43", "lon": "25.92", "name": "озеро Свитязь", "type": "lake",
+               "display_name": "озеро Свитязь, Гродненская область, Беларусь"}
+    volyn = {"lat": "51.49", "lon": "23.85", "name": "Свитязь", "type": "lake",
+             "display_name": "Свитязь, Шацкий район, Волынская область, Украина"}
+    c = FakeClient([{}, [belarus], [volyn, belarus]])
+    WeatherClient._osm_last = 0.0
+    places, obvious = await c.find_cities("озеро Свитязь")
+    assert [c.calls[i][1]["q"] for i in (1, 2)] == ["озеро Свитязь", "Свитязь"]
+    assert not obvious and [p.name for p in places] == ["озеро Свитязь (озеро), Гродненская область, Беларусь",
+                                                       "Свитязь (озеро), Волынская область, Украина"]
