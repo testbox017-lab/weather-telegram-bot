@@ -118,3 +118,11 @@ def test_osm_candidates_labels_and_dedup():
     assert [p.name for p in places] == ["Бахмач-Пассажирский (станция), Черниговская область, Украина",
                                         "Киев, Украина"]
     assert not obvious
+
+
+def test_strip_kind_word():
+    from geo import strip_kind_word
+
+    assert strip_kind_word("озеро Свитязь") == "Свитязь"
+    assert strip_kind_word("г. Говерла") == "Говерла"
+    assert strip_kind_word("Говерла") is None and strip_kind_word("озеро") is None
