@@ -14,6 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 import core
+import health
 from core import CurrentUserMiddleware, ResetInputMiddleware
 from handlers import dates, extras, places, settings, subs, weather
 from handlers.settings import alert_checker
@@ -71,7 +72,8 @@ async def main():
         core.client = WeatherClient(session)
         core.client.model_hook = lambda: core.prefs.current()["model"]
         tasks = [asyncio.create_task(scheduler(bot)), asyncio.create_task(alert_checker(bot)),
-                 asyncio.create_task(extras.forecast_logger(bot))]
+                 asyncio.create_task(extras.forecast_logger(bot)),
+                 asyncio.create_task(health.heartbeat_loop(bot, core.DATA_DIR / health.HEARTBEAT_FILE))]
         try:
             await dp.start_polling(bot)
         finally:

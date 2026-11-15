@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import os
 import subprocess
 import time
@@ -19,6 +21,68 @@ last_tick: datetime | None = None   # обновляется планировщ�
 def mark_tick(now: datetime | None = None) -> None:
     global last_tick
     last_tick = now or datetime.now(timezone.utc)
+
+
+# ---------- Файл-метка для Docker HEALTHCHECK и мониторинга сервера ----------
+# Раз в минуту бот пишет в DATA_DIR/heartbeat.json, когда последний раз «тикал» планировщик рассылок
+# и отвечает ли Telegram. healthcheck.py читает файл; если метка устарела, Docker помечает контейнер
+# unhealthy, и мониторинг сервера присылает алерт.
+
+HEARTBEAT_FILE = "heartbeat.json"
+HEARTBEAT_EVERY = 60        # как часто писать метку
+HEARTBEAT_STALE = 180       # метка или планировщик старше — бот завис
+TELEGRAM_FAIL_LIMIT = 600   # Telegram не отвечает дольше — проблема
+
+
+def write_heartbeat(path: Path, tick: datetime | None, telegram_ok: bool, telegram_fail_since: float | None,
+                    now: float | None = None) -> None:
+    data = {"ts": now if now is not None else time.time(),
+            "tick": tick.timestamp() if tick else None,
+            "telegram_ok": telegram_ok, "telegram_fail_since": telegram_fail_since}
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def heartbeat_problem(path: Path, now: float | None = None) -> str | None:
+    """None — всё в порядке, иначе описание проблемы (его видно в docker inspect)."""
+    now = now if now is not None else time.time()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return "нет файла-метки: бот не запустился или не пишет её"
+    except (OSError, ValueError) as e:
+        return f"файл-метка не читается: {e}"
+    ts = data.get("ts") or 0
+    if now - ts > HEARTBEAT_STALE:
+        return f"метка не обновлялась {int(now - ts)} с: бот завис"
+    tick = data.get("tick")
+    if tick is None or now - tick > HEARTBEAT_STALE:
+        return "планировщик рассылок не отвечает" + (f" {int(now - tick)} с" if tick else "")
+    fail = data.get("telegram_fail_since")
+    if not data.get("telegram_ok") and fail and now - fail > TELEGRAM_FAIL_LIMIT:
+        return f"Telegram не отвечает уже {int((now - fail) // 60)} мин"
+    return None
+
+
+async def heartbeat_loop(bot, path: Path, interval: float = HEARTBEAT_EVERY, once: bool = False) -> None:
+    """Раз в interval секунд проверить Telegram (getMe) и записать метку."""
+    fail_since: float | None = None
+    while True:
+        c = await measure("Telegram", lambda: bot.get_me(), timeout=10)
+        now = time.time()
+        if c.ok:
+            fail_since = None
+        elif fail_since is None:
+            fail_since = now
+            logging.warning("heartbeat: Telegram не отвечает: %s", c.detail)
+        try:
+            write_heartbeat(path, last_tick, c.ok, fail_since, now)
+        except OSError:
+            logging.exception("heartbeat: не удалось записать метку")
+        if once:
+            return
+        await asyncio.sleep(interval)
 
 
 @dataclass

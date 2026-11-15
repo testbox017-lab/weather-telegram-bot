@@ -79,3 +79,55 @@ def test_bot_version(tmp_path):
     # нет переменной и папка не git-репозиторий → "dev"
     assert bot_version({"GIT_COMMIT": "unknown"}, repo=tmp_path) == "dev"
     assert bot_version({}, repo=tmp_path) == "dev"
+
+
+def test_heartbeat_file_and_problems(tmp_path):
+    import time as _t
+    p = tmp_path / "heartbeat.json"
+    assert "нет файла" in health.heartbeat_problem(p, 1000)
+    tick = datetime.fromtimestamp(990, timezone.utc)
+    health.write_heartbeat(p, tick, True, None, now=1000)
+    assert health.heartbeat_problem(p, 1010) is None
+    assert "бот завис" in health.heartbeat_problem(p, 1000 + health.HEARTBEAT_STALE + 1)
+    health.write_heartbeat(p, datetime.fromtimestamp(500, timezone.utc), True, None, now=1000)
+    assert "планировщик" in health.heartbeat_problem(p, 1000)
+    health.write_heartbeat(p, None, True, None, now=1000)
+    assert "планировщик" in health.heartbeat_problem(p, 1000)
+    health.write_heartbeat(p, tick, False, 1000 - 700, now=1000)
+    assert "Telegram не отвечает уже 11 мин" == health.heartbeat_problem(p, 1000)
+    health.write_heartbeat(p, tick, False, 1000 - 60, now=1000)
+    assert health.heartbeat_problem(p, 1000) is None        # короткий сбой Telegram — не проблема
+    p.write_text("{oops")
+    assert "не читается" in health.heartbeat_problem(p, 1000)
+    assert _t.time() > 0
+
+
+def test_heartbeat_loop_writes(tmp_path, monkeypatch):
+    import json
+
+    class FakeBot:
+        def __init__(self, ok):
+            self.ok = ok
+
+        async def get_me(self):
+            if not self.ok:
+                raise ConnectionError("нет сети")
+            return object()
+
+    p = tmp_path / "heartbeat.json"
+    health.mark_tick()
+    asyncio.run(health.heartbeat_loop(FakeBot(True), p, once=True))
+    data = json.loads(p.read_text())
+    assert data["telegram_ok"] is True and data["tick"] and data["telegram_fail_since"] is None
+    asyncio.run(health.heartbeat_loop(FakeBot(False), p, once=True))
+    data = json.loads(p.read_text())
+    assert data["telegram_ok"] is False and data["telegram_fail_since"]
+
+
+def test_healthcheck_script(tmp_path, monkeypatch, capsys):
+    import healthcheck
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    assert healthcheck.main() == 1
+    health.write_heartbeat(tmp_path / health.HEARTBEAT_FILE, datetime.now(timezone.utc), True, None)
+    assert healthcheck.main() == 0
+    assert "ok" in capsys.readouterr().out
