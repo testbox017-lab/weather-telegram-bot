@@ -9,7 +9,7 @@ def test_defaults_and_set(tmp_path):
     assert p.get(1) == FULL and p.get(None) == FULL
     assert p.set(1, "model", "icon_seamless") and p.set(1, "air", "waqi")
     assert not p.set(1, "model", "bad") and not p.set(1, "colour", "red")
-    assert Prefs(tmp_path / "prefs.json").get(1) == {"model": "icon_seamless", "air": "waqi", "short": SHORT_DEFAULT}
+    assert Prefs(tmp_path / "prefs.json").get(1) == {"model": "icon_seamless", "air": "waqi", "review": "on", "short": SHORT_DEFAULT}
     assert p.get(2) == FULL
 
 
@@ -26,7 +26,7 @@ def test_current_user(tmp_path):
 
 def test_unknown_saved_value_falls_back(tmp_path):
     (tmp_path / "prefs.json").write_text('{"1": {"model": "old_model", "air": "waqi"}}', encoding="utf-8")
-    assert Prefs(tmp_path / "prefs.json").get(1) == {"model": "best_match", "air": "waqi", "short": SHORT_DEFAULT}
+    assert Prefs(tmp_path / "prefs.json").get(1) == {"model": "best_match", "air": "waqi", "review": "on", "short": SHORT_DEFAULT}
 
 
 def test_toggle_short(tmp_path):

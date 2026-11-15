@@ -321,3 +321,47 @@ async def test_settings_short_fields(tg):
     assert "pressure" in core.prefs.get(UID)["short"]
     edited = [c for c in tg.session.calls if isinstance(c, EditMessageText)][-1]
     assert "✅ Давление" in [b.text for row in edited.reply_markup.inline_keyboard for b in row]
+
+
+@pytest.mark.asyncio
+async def test_models_review_radar_buttons(tg, monkeypatch, tmp_path):
+    from aiogram.methods import SendPhoto
+
+    import radar
+    from handlers import extras
+    from review import ForecastLog
+    from tests.test_radar_models_review import models_data, nowcast, past_resp
+
+    monkeypatch.setattr(core, "forecast_log", ForecastLog(tmp_path / "log.json"))
+
+    async def fetch_models(place, models, days):
+        return models_data()
+
+    async def fetch_past(place, days):
+        return past_resp()
+
+    async def fetch_nowcast(place):
+        return nowcast([0, 0.5])
+
+    async def image(session, lat, lon):
+        return b"\x89PNG fake", datetime(2026, 11, 15, 8, 0, tzinfo=timezone.utc)
+
+    for name, fn in (("fetch_models", fetch_models), ("fetch_past", fetch_past), ("fetch_nowcast", fetch_nowcast)):
+        monkeypatch.setattr(core.client, name, fn, raising=False)
+    monkeypatch.setattr(core.client, "session", None, raising=False)
+    monkeypatch.setattr(extras, "radar_image", image)
+    await tg.press("md:51.180:32.830")
+    assert "что говорят разные модели" in tg.session.texts()[-1]
+    await tg.press("rv:51.180:32.830")
+    assert "итоги недели" in tg.session.texts()[-1]
+    await tg.press("rd:51.180:32.830")
+    photo = [c for c in tg.session.calls if isinstance(c, SendPhoto)][-1]
+    assert "снимок 08:00" in photo.caption and "начнётся около 10:15" in photo.caption
+    assert radar.RING_KM == 50
+
+
+@pytest.mark.asyncio
+async def test_settings_review_toggle(tg):
+    await tg.press("cfg:review:off")
+    assert core.prefs.get(UID)["review"] == "off"
+    assert "ИТОГИ НЕДЕЛИ" in tg.session.texts()[-1]

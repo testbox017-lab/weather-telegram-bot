@@ -3,3 +3,4 @@ aiohttp>=3.9
 matplotlib>=3.9
 astral>=3.2
 tzdata
+pillow>=10
