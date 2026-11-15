@@ -17,3 +17,5 @@ alerts.json
 backups/
 normals.json
 forecast_log*.json
+heartbeat.json
+heartbeat.tmp

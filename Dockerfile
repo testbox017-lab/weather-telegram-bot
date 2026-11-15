@@ -27,4 +27,8 @@ USER bot
 
 VOLUME /data
 
+# Бот раз в минуту пишет /data/heartbeat.json; если метка устарела или планировщик рассылок завис,
+# контейнер становится unhealthy (это видит мониторинг сервера). Подробности: health.py
+HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 CMD ["python", "healthcheck.py"]
+
 CMD ["python", "bot.py"]
