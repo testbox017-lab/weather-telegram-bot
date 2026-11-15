@@ -15,12 +15,12 @@ from aiogram.types import BotCommand
 
 import core
 from core import CurrentUserMiddleware, ResetInputMiddleware
-from handlers import dates, places, settings, subs, weather
+from handlers import dates, extras, places, settings, subs, weather
 from handlers.settings import alert_checker
 from handlers.subs import scheduler
 from weather import WeatherClient
 
-ROUTERS = (places.router, dates.router, subs.router, settings.router,
+ROUTERS = (places.router, dates.router, subs.router, settings.router, extras.router,
            weather.router)  # weather последним: его обработчик текста ловит всё остальное
 
 
@@ -58,6 +58,9 @@ async def main():
             BotCommand(command="weekend", description="Погода на выходные: /weekend Город"),
             BotCommand(command="table", description="3 дня таблицей: /table Город"),
             BotCommand(command="compare", description="Сравнить мои места"),
+            BotCommand(command="radar", description="Радар осадков: /radar Город"),
+            BotCommand(command="models", description="ECMWF, ICON и GFS на одном графике"),
+            BotCommand(command="review", description="Итоги недели и точность прогноза"),
             BotCommand(command="settings", description="Источник погоды и качества воздуха"),
             BotCommand(command="ping", description="Проверить связь с сервером"),
             BotCommand(command="help", description="Справка"),
@@ -67,7 +70,8 @@ async def main():
     async with aiohttp.ClientSession() as session:
         core.client = WeatherClient(session)
         core.client.model_hook = lambda: core.prefs.current()["model"]
-        tasks = [asyncio.create_task(scheduler(bot)), asyncio.create_task(alert_checker(bot))]
+        tasks = [asyncio.create_task(scheduler(bot)), asyncio.create_task(alert_checker(bot)),
+                 asyncio.create_task(extras.forecast_logger(bot))]
         try:
             await dp.start_polling(bot)
         finally:

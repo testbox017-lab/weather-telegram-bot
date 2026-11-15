@@ -149,6 +149,31 @@ class WeatherClient:
         })
         return split_yesterday(data)
 
+    async def fetch_models(self, place: Place, models: list[str], days: int = 7) -> dict:
+        """Прогноз сразу нескольких моделей: ключи вида temperature_2m_max_ecmwf_ifs025 (spread.py)."""
+        return await self._get(FORECAST_URL, {
+            "latitude": place.lat, "longitude": place.lon, "timezone": "auto", "forecast_days": days,
+            "hourly": "temperature_2m", "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+            "models": ",".join(models),
+        })
+
+    async def fetch_nowcast(self, place: Place) -> dict:
+        """Осадки с шагом 15 минут на сегодня и завтра (radar.nowcast_text отбирает ближайшие часы)."""
+        return await self._get(FORECAST_URL, {
+            "latitude": place.lat, "longitude": place.lon, "timezone": "auto", "forecast_days": 2,
+            "current": "precipitation", "minutely_15": "precipitation,snowfall",
+        })
+
+    async def fetch_past(self, place: Place, days: int = 7) -> dict:
+        """Фактическая погода за прошедшие дни (анализ Open-Meteo): daily за days суток до сегодня."""
+        data = await self._get(FORECAST_URL, {
+            "latitude": place.lat, "longitude": place.lon, "timezone": "auto", "past_days": days,
+            "forecast_days": 1, "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum",
+        })
+        daily = data.get("daily") or {}
+        data["daily"] = {k: v[:days] for k, v in daily.items()}  # последний элемент — сегодня, он не нужен
+        return data
+
     async def fetch_waqi(self, place: Place, token: str) -> dict:
         """Ближайшая станция WAQI (aqicn.org): data из ответа API; ошибка API — ValueError."""
         from air import WAQI_URL

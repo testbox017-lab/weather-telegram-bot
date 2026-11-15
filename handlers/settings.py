@@ -17,7 +17,7 @@ import health
 from alerts import ALERT_LIMIT, CHECK_EVERY, KINDS, Alerts, check_all
 from core import (BTN_ALERTS, BTN_PING, BTN_SETTINGS, NO_PLACE, alerts, keyboard, last_places, place_name, prefs, subs,
                   with_place)
-from prefs import AIR_SOURCES, MODELS
+from prefs import AIR_SOURCES, CHOICES, MODELS, REVIEW
 from weather import SHORT_FIELDS
 from places import build_cb
 from weather import ARCHIVE_URL, FORECAST_URL, GEO_URL, Place
@@ -48,6 +48,13 @@ def settings_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     short_buttons = [b(text=f"{'✅' if f in p['short'] else '▫️'} {title}", callback_data=f"cfg:short:{f}")
                      for f, title in SHORT_FIELDS.items()]
     rows += [short_buttons[i:i + 2] for i in range(0, len(short_buttons), 2)]
+    lines += ["", "<b>ИТОГИ НЕДЕЛИ</b> — погода за неделю и точность прогноза:"]
+    review_row = []
+    for key, (title, about) in REVIEW.items():
+        mark = "✅ " if p["review"] == key else ""
+        lines.append(f"{'✅' if mark else '▫️'} <b>{title}</b> — {about}")
+        review_row.append(b(text=f"{mark}{title}", callback_data=f"cfg:review:{key}"))
+    rows.append(review_row)
     if p["air"] == "waqi" and not os.getenv("WAQI_TOKEN", "").strip():
         lines += ["", "⚠️ Для WAQI на сервере пока не задан токен — до этого показываю Open-Meteo."]
     lines += ["", "Нажмите, чтобы выбрать. Настройка действует на прогнозы, рассылки и предупреждения."]
@@ -79,7 +86,7 @@ async def on_settings_button(cb: CallbackQuery):
         await cb.answer("Кнопка устарела", show_alert=True)
         return
     else:
-        await cb.answer(f"Выбрано: {(MODELS if key == 'model' else AIR_SOURCES)[value][0]}")
+        await cb.answer(f"Выбрано: {CHOICES[key][value][0]}")
     if isinstance(cb.message, Message):
         text, markup = settings_view(cb.from_user.id)
         try:

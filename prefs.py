@@ -23,16 +23,20 @@ AIR_SOURCES = {
                                  "не будет и значения."),
     "off": ("Выключено", "Кнопки и команды качества воздуха не будет."),
 }
-DEFAULTS = {"model": "best_match", "air": "openmeteo"}
+REVIEW = {
+    "on": ("По воскресеньям", "Вечером в воскресенье — итоги недели для ⭐ Моих мест (до трёх)."),
+    "off": ("Не присылать", "Итоги можно посмотреть в любой момент: /review."),
+}
+DEFAULTS = {"model": "best_match", "air": "openmeteo", "review": "on"}
 # поля краткой сводки (weather.SHORT_FIELDS) — список, хранится отдельно от выбора «одно из»
 SHORT_KEY = "short"
-CHOICES = {"model": MODELS, "air": AIR_SOURCES}
+CHOICES = {"model": MODELS, "air": AIR_SOURCES, "review": REVIEW}
 
 current_user: ContextVar[int | None] = ContextVar("current_user", default=None)
 
 
 class Prefs:
-    """user_id → {"model": ..., "air": ...}; хранится в JSON-файле, по умолчанию — DEFAULTS."""
+    """user_id → {"model": ..., "air": ..., "review": ..., "short": [...]}; хранится в JSON-файле, по умолчанию — DEFAULTS."""
 
     def __init__(self, path: Path):
         self.path = Path(path)

@@ -228,3 +228,47 @@ def compare_chart(series: list[tuple[str, list[str], list, list]], days: int = 7
     ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), frameon=False, fontsize=9)
     _style(ax, "Мои места: днём (линия) и ночью (пунктир)")
     return _png(fig)
+
+
+MODEL_COLORS = {"ecmwf_ifs025": "#e8590c", "icon_seamless": "#1c7ed6", "gfs_seamless": "#2f9e44"}
+
+
+def models_chart(name: str, data: dict, models: list[str], labels: dict[str, str]) -> bytes:
+    """Почасовая температура каждой модели (линии) и общий разброс (заливка), под ней — осадки по дням."""
+    hourly, daily = data.get("hourly") or {}, data.get("daily") or {}
+    times = [datetime.fromisoformat(t) for t in hourly.get("time") or []]
+    if not times:
+        raise ValueError("нет почасовых данных")
+    fig, (ax, ar) = plt.subplots(2, 1, figsize=(9, 6), height_ratios=[3, 1.3], sharex=False)
+    cols = {m: hourly.get(f"temperature_2m_{m}") or [] for m in models}
+    lo, hi, xs = [], [], []
+    for i, t in enumerate(times):
+        vals = [c[i] for c in cols.values() if i < len(c) and c[i] is not None]
+        if len(vals) >= 2:
+            xs.append(t), lo.append(min(vals)), hi.append(max(vals))
+    if xs:
+        ax.fill_between(xs, lo, hi, color="#adb5bd", alpha=0.3, lw=0, label="разброс")
+    for m in models:
+        pts = [(t, v) for t, v in zip(times, cols[m]) if v is not None]
+        if pts:
+            ax.plot([p[0] for p in pts], [p[1] for p in pts], color=MODEL_COLORS.get(m, "#495057"), lw=1.6,
+                    label=labels.get(m, m))
+    ax.set_ylabel("Температура, °C")
+    ax.xaxis.set_major_locator(mdates.DayLocator())
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
+    ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), frameon=False, fontsize=9)
+    _style(ax, f"{name}: прогноз разных моделей")
+
+    days = [datetime.fromisoformat(t) for t in daily.get("time") or []]
+    width = 0.8 / max(len(models), 1)
+    for k, m in enumerate(models):
+        col = daily.get(f"precipitation_sum_{m}") or []
+        pos = [j + (k - (len(models) - 1) / 2) * width for j in range(len(days))]
+        ar.bar(pos, [(col[j] if j < len(col) and col[j] is not None else 0) for j in range(len(days))],
+               width=width, color=MODEL_COLORS.get(m, "#495057"), alpha=0.75)
+    ar.set_xticks(list(range(len(days))), [f"{DAYS_RU[d.weekday()]}\n{d:%d.%m}" for d in days], fontsize=8)
+    ar.set_ylabel("Осадки, мм")
+    ar.set_ylim(0, max(2, ar.get_ylim()[1]))
+    _style(ar, "Осадки за сутки")
+    fig.tight_layout()
+    return _png(fig)

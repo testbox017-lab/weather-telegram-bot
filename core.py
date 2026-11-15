@@ -23,6 +23,7 @@ from dates import build_cal_cb
 from normals import Normals, norm_text
 from places import FAV_LIMIT, Favorites, LastPlaces, build_cb, coords_name, parse_coords
 from prefs import Prefs, current_user, model_label
+from review import ForecastLog
 from subs import SUB_LIMIT, Subscriptions
 from weather import Place, WeatherClient, format_forecast
 
@@ -49,6 +50,7 @@ subs = Subscriptions(DATA_DIR / "subscriptions.json")
 alerts = Alerts(DATA_DIR / "alerts.json")
 normals = Normals(DATA_DIR / "normals.json")
 prefs = Prefs(DATA_DIR / "prefs.json")
+forecast_log = ForecastLog(DATA_DIR / "forecast_log.json")
 PlaceAction = Callable[[Message, Place], Awaitable[None]]
 choices: dict[int, tuple[int, list[Place], PlaceAction]] = {}  # выбор среди одноимённых городов
 choice_ids = itertools.count(1)
@@ -119,10 +121,16 @@ HELP = (
     "• /weekend [город] или 🏖 Выходные — прогноз на ближайшие субботу и воскресенье с советом\n"
     "• /table [город] или 📋 Таблица — 3 дня текстом: утро, день, вечер и ночь\n"
     "• /compare или 📊 Сравнить в «Моих местах» — все места в одном сообщении и на одном графике\n"
+    "• /radar [город] или 🛰 Радар — снимок радара осадков (RainViewer) и когда начнётся или закончится "
+    "дождь в ближайшие 3 часа\n"
+    "• /models [город] или 🧪 Модели — ECMWF, ICON и GFS на одном графике: где модели расходятся, "
+    "прогноз менее надёжен\n"
+    "• /review [город] или 📈 Итоги недели — погода за прошедшие 7 дней и насколько точным был прогноз "
+    "на завтра. По воскресеньям в 20:00 бот присылает итоги сам (отключается в настройках)\n"
     "• В сводке на сегодня и на дату есть строка 📈 «как обычно в этот день» — норма за 1991–2020\n\n"
     "Кроме городов можно искать горы, станции, озёра и достопримечательности: «Говерла», «озеро Свитязь»\n\n"
     f"{BTN_SETTINGS} или /settings — модель прогноза (Авто, ECMWF, ICON, GFS), источник качества воздуха "
-    "(Open-Meteo, станции WAQI или выключено) и что показывать в краткой сводке рассылок\n\n"
+    "(Open-Meteo, станции WAQI или выключено), что показывать в краткой сводке рассылок и итоги недели\n\n"
     f"{BTN_PING} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
 )
 
@@ -227,6 +235,9 @@ def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")],
         [InlineKeyboardButton(text="📋 Таблица", callback_data=f"tb:{place.lat:.3f}:{place.lon:.3f}"),
          InlineKeyboardButton(text="⚠️ Предупреждения", callback_data=f"al:new:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text="🛰 Радар", callback_data=f"rd:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text="🧪 Модели", callback_data=f"md:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text="📈 Итоги недели", callback_data=f"rv:{place.lat:.3f}:{place.lon:.3f}")],
     ])
 
 

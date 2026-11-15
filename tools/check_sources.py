@@ -107,6 +107,54 @@ async def main():
         from weather import SHORT_FIELDS
         print("  " + format_short("X", d1, list(SHORT_FIELDS)).replace("\n", "\n  "))
 
+        print("\n=== модели: ECMWF / ICON / GFS ===")
+        from charts import models_chart
+        from spread import SPREAD_MODELS, format_spread, label
+        try:
+            dm = await client.fetch_models(place, SPREAD_MODELS, 7)
+            print("  null: " + (", ".join(nulls(dm.get("daily"))) or "нет"))
+            png = models_chart("X", dm, SPREAD_MODELS, {m: label(m) for m in SPREAD_MODELS})
+            out = Path(os.environ["DATA_DIR"]) / "models.png"
+            out.write_bytes(png)
+            print(f"  ok  график {len(png) // 1024} КБ → {out}")
+            print("  " + format_spread("X", dm).replace("\n", "\n  "))
+        except Exception:
+            failed += 1
+            print("  FAIL модели:")
+            traceback.print_exc(limit=4)
+
+        print("\n=== радар ===")
+        from radar import nowcast_text, radar_image
+        try:
+            print("  " + nowcast_text(await client.fetch_nowcast(place)))
+        except Exception:
+            failed += 1
+            print("  FAIL 15-минутный прогноз:")
+            traceback.print_exc(limit=4)
+        try:
+            png, taken = await radar_image(session, lat, lon)
+            out = Path(os.environ["DATA_DIR"]) / "radar.png"
+            out.write_bytes(png)
+            print(f"  ok  снимок {taken:%H:%M} UTC, {len(png) // 1024} КБ → {out}")
+            png2, _ = await radar_image(session, lat, lon)
+            print(f"  ok  повтор из кэша тайлов: {len(png2) // 1024} КБ")
+        except Exception:
+            failed += 1
+            print("  FAIL радар:")
+            traceback.print_exc(limit=4)
+
+        print("\n=== итоги недели ===")
+        from review import ForecastLog, format_review
+        try:
+            log = ForecastLog(Path(os.environ["DATA_DIR"]) / "forecast_log_check.json")
+            print(f"  запись прогноза на завтра: {log.record(place, await client.fetch(place, 2))}")
+            past = await client.fetch_past(place, 7)
+            print("  " + format_review("X", past, log.forecasts(place)).replace("\n", "\n  "))
+        except Exception:
+            failed += 1
+            print("  FAIL итоги:")
+            traceback.print_exc(limit=4)
+
         print("\n=== air ===")
         try:
             format_air("X", await client.fetch_air(place))
