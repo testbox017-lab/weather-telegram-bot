@@ -304,31 +304,58 @@ class Subscriptions:
                 s["next"] = next_run(sched, now, s.get("tz", "UTC")).isoformat()
                 self._save()
 
+    def retry_at(self, user_id: int, sub_id: int, when: datetime) -> None:
+        """Повторить рассылку в when (после сбоя сети), не трогая расписание."""
+        for s in self._data.get(str(user_id), []):
+            if s["id"] == sub_id:
+                s["next"] = when.isoformat()
+                self._save()
+
     @staticmethod
     def place(sub: dict) -> Place:
         return Place(sub["name"], float(sub["lat"]), float(sub["lon"]))
 
 
-async def run_due(subs: Subscriptions, now: datetime, send, blocked_exc: tuple = (), pause: float = 0.3) -> int:
+RETRY_EVERY = timedelta(minutes=5)  # сбой сети: повторить через 5 минут
+RETRY_TIMES = 2                     # не больше двух повторов, дальше — по расписанию
+_retries: dict[tuple[int, int], int] = {}
+
+
+async def run_due(subs: Subscriptions, now: datetime, send, blocked_exc: tuple = (), pause: float = 0.3,
+                  retry_exc: tuple = ()) -> int:
     """Отправить все наступившие рассылки. send(user_id, sub) — корутина.
 
     Пользователь заблокировал бота (blocked_exc) → удаляем все его рассылки;
-    другие ошибки — в лог, попробуем в следующий раз по расписанию.
+    сбой сети (retry_exc, например таймаут Telegram) → короткая строка в лог и повтор через RETRY_EVERY,
+    не больше RETRY_TIMES раз; другие ошибки — в лог с трейсбеком, попробуем в следующий раз по расписанию.
     """
     sent = 0
     for uid, sub in subs.due(now):
         if quiet_now(sub, now):  # ночь — не отправляем, переносим на утро
             subs.advance(uid, sub["id"], now, morning=True)
             continue
+        rkey = (uid, sub["id"])
         try:
             await send(uid, sub)
             sent += 1
         except blocked_exc:
             logging.info("пользователь %s заблокировал бота — удаляю рассылки", uid)
             subs.remove_all(uid)
+            _retries.pop(rkey, None)
             continue
+        except retry_exc as e:
+            tries = _retries.get(rkey, 0)
+            if tries < RETRY_TIMES:
+                _retries[rkey] = tries + 1
+                logging.warning("рассылка для %s не ушла (%s), повтор через %d мин",
+                                uid, e, RETRY_EVERY.seconds // 60)
+                subs.retry_at(uid, sub["id"], now + RETRY_EVERY)
+                continue
+            logging.warning("рассылка для %s не ушла и после %d повторов (%s), следующая — по расписанию",
+                            uid, tries, e)
         except Exception:
             logging.exception("ошибка рассылки для %s", uid)
+        _retries.pop(rkey, None)
         subs.advance(uid, sub["id"], now)
         if pause:
             await asyncio.sleep(pause)

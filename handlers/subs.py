@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from html import escape
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -298,7 +298,8 @@ async def scheduler(bot: Bot, every: float = 30):
     while True:
         health.mark_tick()
         try:
-            n = await run_due(subs, datetime.now(timezone.utc), send, (TelegramForbiddenError,))
+            n = await run_due(subs, datetime.now(timezone.utc), send, (TelegramForbiddenError,),
+                              retry_exc=(TelegramNetworkError,))
             if n:
                 logging.info("scheduler: sent %d", n)
         except Exception:

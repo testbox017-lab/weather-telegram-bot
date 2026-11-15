@@ -226,3 +226,48 @@ def test_night_run_postponed_to_morning(tmp_path):
 
     assert asyncio.run(run_due(s, night, send, pause=0)) == 0 and not sent
     assert s.list(1)[0]["next"] == datetime(2026, 11, 15, 5, 0, tzinfo=UTC).isoformat()
+
+
+class NetDown(Exception):
+    pass
+
+
+def test_network_error_retried_then_scheduled(tmp_path, caplog):
+    import subs as subs_mod
+    subs_mod._retries.clear()
+    s = Subscriptions(tmp_path / "s.json")
+    s.add(1, P, {"hours": 3}, "UTC", NOW)
+    calls = []
+
+    async def send(uid, sub):
+        calls.append(uid)
+        raise NetDown("Request timeout error")
+
+    t = NOW + timedelta(hours=3)
+    for i in range(3):  # первая попытка и два повтора через 5 минут
+        assert asyncio.run(run_due(s, t, send, retry_exc=(NetDown,), pause=0)) == 0
+        if i < 2:
+            assert s.list(1)[0]["next"] == (t + subs_mod.RETRY_EVERY).isoformat()
+            t += subs_mod.RETRY_EVERY
+    assert calls == [1, 1, 1]
+    assert s.list(1)[0]["next"] == (t + timedelta(hours=3)).isoformat()  # дальше — по расписанию
+    assert "Traceback" not in caplog.text and not subs_mod._retries
+
+
+def test_network_error_retry_succeeds(tmp_path):
+    import subs as subs_mod
+    subs_mod._retries.clear()
+    s = Subscriptions(tmp_path / "s.json")
+    s.add(1, P, {"hours": 3}, "UTC", NOW)
+    fails = [NetDown("timeout")]
+
+    async def send(uid, sub):
+        if fails:
+            raise fails.pop()
+
+    t = NOW + timedelta(hours=3)
+    assert asyncio.run(run_due(s, t, send, retry_exc=(NetDown,), pause=0)) == 0
+    t += subs_mod.RETRY_EVERY
+    assert asyncio.run(run_due(s, t, send, retry_exc=(NetDown,), pause=0)) == 1
+    assert s.list(1)[0]["next"] == (t + timedelta(hours=3)).isoformat()
+    assert not subs_mod._retries
