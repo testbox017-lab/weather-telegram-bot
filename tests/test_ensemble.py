@@ -106,3 +106,12 @@ async def test_fetch_mean_degrades(monkeypatch):
     c.model_hook = lambda: "mean"
     with pytest.raises(aiohttp.ClientConnectionError):
         await c.fetch(PLACE, 1)
+
+
+def test_current_from_hourly_when_models_have_no_current():
+    multi = multi_response()
+    multi["current"] = {"time": multi["current"]["time"]}  # Open-Meteo не прислал current по моделям
+    data = ensemble.apply(split_yesterday(om_response()), split_yesterday(multi), owm_current(), owm_forecast())
+    cur = data["current"]
+    assert cur["temperature_2m"] == pytest.approx((2 + 4 + 6 + 4.6) / 4, abs=0.01)  # из почасовых на 17:00
+    assert cur["apparent_temperature"] == pytest.approx((0 + 1.2) / 2)  # «ощущается» по часам нет: «Авто» + OWM

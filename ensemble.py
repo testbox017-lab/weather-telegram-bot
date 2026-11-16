@@ -67,6 +67,21 @@ def owm_daily(recon: dict, days: list[str], min_hours: int) -> dict[str, dict]:
     return out
 
 
+def model_current(multi: dict, key: str, now: str) -> list:
+    """Текущее значение key у каждой модели. В ответе с несколькими моделями блока current по моделям
+    может не быть — тогда берём почасовой прогноз модели на текущий час."""
+    cur = multi.get("current") or {}
+    vals = [cur.get(f"{key}_{m}") for m in MEMBERS]
+    if any(v is not None for v in vals):
+        return [v for v in vals if v is not None]
+    hourly = multi.get("hourly") or {}
+    times = hourly.get("time") or []
+    i = next((j for j, t in enumerate(times) if t[:13] == now[:13]), None)
+    if i is None:
+        return []
+    return [c[i] for m in MEMBERS if i < len(c := hourly.get(f"{key}_{m}") or []) and c[i] is not None]
+
+
 def today_spread(multi: dict, owm_today: dict | None) -> float | None:
     """Насколько источники расходятся сегодня: наибольшая разница дневных максимумов или минимумов, °C."""
     daily = multi.get("daily") or {}
@@ -92,10 +107,13 @@ def apply(data: dict, multi: dict, owm_current: dict | None = None, owm_forecast
         recon = owm.hourly(owm_forecast, int(data.get("utc_offset_seconds") or 0))
         cur_owm = owm.parse_current(owm_current or {})
         owm_days = owm_daily(recon, (data.get("daily") or {}).get("time") or [], owm.MODELS_HOURS)
-    cur, mcur = data.get("current") or {}, multi.get("current") or {}
+    cur = data.get("current") or {}
     for key in CURRENT:
         if key in cur:
-            v = _mean([mcur.get(f"{key}_{m}") for m in MEMBERS] + [cur_owm.get(key)], key)
+            models = model_current(multi, key, cur.get("time", ""))
+            if not models:  # у моделей этого поля нет — от Open-Meteo берём «Авто»
+                models = [cur[key]]
+            v = _mean(models + [cur_owm.get(key)], key)
             if v is not None:
                 cur[key] = v
     _average_block(data.get("hourly") or {}, multi.get("hourly") or {}, HOURLY, [recon] if recon else [])
