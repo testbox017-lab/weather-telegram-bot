@@ -1,30 +1,39 @@
 """Режим «Среднее»: прогноз как среднее ECMWF, ICON, GFS и OpenWeatherMap (если задан ключ).
 
 Числа (температура, осадки, ветер, влажность, давление) — среднее тех источников, что прислали значение.
-Код погоды, направление ветра, восход, УФ и остальное — от «Авто» Open-Meteo: среднее «ясно» и «дождь»
+Направление ветра — среднее по кругу. Код погоды, облачность (если её нет у моделей по часам), восход, УФ и остальное — от «Авто» Open-Meteo: среднее «ясно» и «дождь»
 не имеет смысла. Под прогнозом бот пишет, из скольких источников среднее и насколько они расходятся сегодня.
 """
 from __future__ import annotations
+
+import math
 
 MEMBERS = ["ecmwf_ifs025", "icon_seamless", "gfs_seamless"]
 KEY = "mean"  # значение настройки prefs "model"
 OWM = "owm"
 
 CURRENT = ["temperature_2m", "apparent_temperature", "relative_humidity_2m", "wind_speed_10m", "wind_gusts_10m",
-           "pressure_msl", "cloud_cover", "dew_point_2m", "precipitation"]
+           "pressure_msl", "cloud_cover", "dew_point_2m", "precipitation", "wind_direction_10m"]
 HOURLY = ["temperature_2m", "precipitation", "precipitation_probability", "wind_speed_10m", "wind_gusts_10m",
-          "relative_humidity_2m", "dew_point_2m"]
+          "relative_humidity_2m", "dew_point_2m", "wind_direction_10m"]
 DAILY = ["temperature_2m_max", "temperature_2m_min", "precipitation_sum", "precipitation_probability_max",
          "wind_speed_10m_max", "wind_gusts_10m_max", "relative_humidity_2m_mean", "relative_humidity_2m_min",
-         "relative_humidity_2m_max"]
+         "relative_humidity_2m_max", "wind_direction_10m_dominant"]
 WHOLE = {"relative_humidity_2m", "cloud_cover", "precipitation_probability", "precipitation_probability_max",
          "relative_humidity_2m_mean", "relative_humidity_2m_min", "relative_humidity_2m_max"}
+
+
+DIRECTION = {"wind_direction_10m", "wind_direction_10m_dominant"}
 
 
 def _mean(vals: list, key: str):
     vals = [v for v in vals if v is not None]
     if not vals:
         return None
+    if key in DIRECTION:  # направление — среднее по кругу: 350° и 10° → 0°, а не 180°
+        x = sum(math.cos(math.radians(v)) for v in vals)
+        y = sum(math.sin(math.radians(v)) for v in vals)
+        return round(math.degrees(math.atan2(y, x))) % 360 if abs(x) + abs(y) > 1e-6 else round(vals[0])
     m = sum(vals) / len(vals)
     return round(m) if key in WHOLE else round(m, 2)
 

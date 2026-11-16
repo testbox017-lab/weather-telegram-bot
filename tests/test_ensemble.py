@@ -115,3 +115,8 @@ def test_current_from_hourly_when_models_have_no_current():
     cur = data["current"]
     assert cur["temperature_2m"] == pytest.approx((2 + 4 + 6 + 4.6) / 4, abs=0.01)  # из почасовых на 17:00
     assert cur["apparent_temperature"] == pytest.approx((0 + 1.2) / 2)  # «ощущается» по часам нет: «Авто» + OWM
+
+
+def test_wind_direction_circular_mean():
+    assert ensemble._mean([350, 10], "wind_direction_10m") == 0
+    assert ensemble._mean([180, 180, 135], "wind_direction_10m") in (164, 165)
