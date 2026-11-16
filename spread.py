@@ -36,7 +36,8 @@ def day_spread(daily: dict, i: int, models: list[str]) -> dict | None:
     """Разброс моделей за день i: диапазоны макс./мин. температуры и осадков, сколько моделей есть."""
     highs = [v for m in models if (v := _at(series(daily, "temperature_2m_max", m), i)) is not None]
     lows = [v for m in models if (v := _at(series(daily, "temperature_2m_min", m), i)) is not None]
-    precs = [v for m in models if (v := _at(series(daily, "precipitation_sum", m), i)) is not None]
+    precs = [max(v, 0.0) for m in models  # модели иногда дают -0.2 мм
+             if (v := _at(series(daily, "precipitation_sum", m), i)) is not None]
     if not highs or not lows:
         return None
     spread = max(max(highs) - min(highs), max(lows) - min(lows))

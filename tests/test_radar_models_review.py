@@ -251,3 +251,8 @@ def test_send_reviews_sunday_once(tmp_path, monkeypatch):
     assert asyncio.run(extras.send_reviews(bot, sunday)) == 1
     assert asyncio.run(extras.send_reviews(bot, sunday + timedelta(hours=1))) == 0
     assert bot.sent[0][0] == 1 and "итоги недели" in bot.sent[0][1]
+
+
+def test_negative_precipitation_clipped():
+    text = format_spread("Бахмач", models_data(prec=(-0.2, 1.5, 0.3)))
+    assert "-0.2" not in text and "0.0–1.5 мм" in text

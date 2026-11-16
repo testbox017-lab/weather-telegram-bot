@@ -42,6 +42,10 @@ def verdict(code: int | None, prob: int | None, wind: float | None, tmax: float 
         return _("☔️ Скорее дождливо — зонт обязателен")
     if (wind or 0) >= 10:
         return _("💨 Ветрено — для прогулок не лучший день")
+    if code in SNOW_CODES:  # снег по прогнозу, но вероятность невысокая — «сухо» было бы неправдой
+        return _("🌨 Возможен небольшой снег — одевайтесь теплее")
+    if code in RAIN_CODES:
+        return _("🤔 Переменчиво — возьмите зонт на всякий случай")
     if prob <= 30 and tmax is not None and tmax >= 15:
         return _("😎 Отличный день для прогулки или поездки")
     if prob <= 30:
