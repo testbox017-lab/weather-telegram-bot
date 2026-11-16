@@ -37,6 +37,8 @@ def settings_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     for key, (title, about) in MODELS.items():
         if key == owm.KEY and not has_owm and p["model"] != key:
             continue  # без ключа OpenWeatherMap не предлагаем
+        if not has_owm:
+            about = about.replace(" (и OpenWeatherMap, если он подключён)", "")
         mark = "✅ " if p["model"] == key else ""
         lines.append(f"{'✅' if mark else '▫️'} <b>{title}</b> — {about}")
         rows.append([b(text=f"{mark}{title}", callback_data=f"cfg:model:{key}")])

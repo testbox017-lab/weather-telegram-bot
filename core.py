@@ -16,6 +16,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
 
+import ensemble
 from alerts import ALERT_LIMIT, Alerts
 from astro import astro_text
 from charts import daily_chart, hourly_chart, wind_humidity_chart
@@ -319,12 +320,18 @@ async def build_weather(place: Place, days: int, header: str = "", data: dict | 
         data = await client.fetch(place, days)
     text = header + format_forecast(place.name, data, days)
     model = prefs.current()["model"]
-    if data.get("source") == "owm":
+    if data.get("source") == "mean":
+        text += f"\n<i>{ensemble.note(data)}</i>"
+    elif data.get("source") == "mean_failed":
+        text += "\n<i>Модели для среднего сейчас не ответили — показан прогноз «Авто»</i>"
+    elif data.get("source") == "owm":
         text += "\n<i>Источник: OpenWeatherMap (дальше 5 дней — Open-Meteo)</i>"
     elif data.get("source") == "owm_failed":
         text += "\n<i>OpenWeatherMap сейчас не ответил — показан прогноз Open-Meteo</i>"
     elif model == "owm":
         text += "\n<i>Прогноз Open-Meteo: OpenWeatherMap не даёт прогноза на отдельные даты</i>"
+    elif model == "mean":
+        text += "\n<i>Прогноз на дату — «Авто» Open-Meteo</i>"
     elif model != "best_match":
         text += f"\n<i>Модель прогноза: {model_label(model)}</i>"
     if days == 1:

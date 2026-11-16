@@ -63,6 +63,10 @@ async def main():
                         failed += 1
                         print(f"  FAIL OpenWeatherMap: {owm.failure_text(e)}")
                     print(f"  источник: {d1.get('source')}")
+                if model == "mean":
+                    from ensemble import note
+
+                    print(f"  источник: {d1.get('source')}; {note(d1) if d1.get('source') == 'mean' else ''}")
                 d7 = await client.fetch(place, 9)
                 day = date.today() + timedelta(days=3)
                 dd = await client.fetch_day(place, day)
