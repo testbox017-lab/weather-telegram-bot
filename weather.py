@@ -45,7 +45,7 @@ class WeatherClient:
 
     def _model_param(self) -> dict:
         model = self.model_hook()
-        return {"models": model} if model and model not in ("best_match", "owm") else {}
+        return {"models": model} if model and model not in ("best_match", "owm", "mean") else {}
 
     retry_delays = (1.0, 3.0)  # повторы при временных сбоях Open-Meteo (5xx, таймаут, обрыв связи)
 
@@ -129,7 +129,7 @@ class WeatherClient:
         Вчерашний день запрашивается тем же запросом (past_days=1) и выносится в data["yesterday"],
         чтобы hourly и daily, как и раньше, начинались с сегодняшнего дня.
         """
-        data = await self._get(FORECAST_URL, {
+        params = {
             "latitude": place.lat,
             "longitude": place.lon,
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,"
@@ -146,9 +146,12 @@ class WeatherClient:
             "forecast_days": max(days, 2),
             "past_days": 1,
             **self._model_param(),
-        })
-        data = split_yesterday(data)
-        if self.model_hook() == "owm":  # OpenWeatherMap поверх Open-Meteo; не вышло — остаётся Open-Meteo
+        }
+        model = self.model_hook()
+        if model == "mean":
+            return await self._fetch_mean(place, params)
+        data = split_yesterday(await self._get(FORECAST_URL, params))
+        if model == "owm":  # OpenWeatherMap поверх Open-Meteo; не вышло — остаётся Open-Meteo
             import owm
 
             try:
@@ -158,6 +161,37 @@ class WeatherClient:
                 owm.log_failure(e)
                 data["source"] = "owm_failed"
         return data
+
+    async def _fetch_mean(self, place: Place, params: dict) -> dict:
+        """Режим «Среднее» (ensemble.py): «Авто» + ECMWF/ICON/GFS одним запросом + OWM, если есть ключ.
+        Не ответили модели — обычный «Авто»; не ответил OWM — среднее трёх моделей."""
+        import ensemble
+        import owm
+
+        async def owm_or_none():
+            if not owm.api_key():
+                return None
+            try:
+                return await self.fetch_owm(place)
+            except Exception as e:
+                owm.log_failure(e)
+                return None
+
+        base, multi, owm_data = await asyncio.gather(
+            self._get(FORECAST_URL, params),
+            self._get(FORECAST_URL, {**params, "models": ",".join(ensemble.MEMBERS)}),
+            owm_or_none(), return_exceptions=True)
+        if isinstance(base, BaseException):
+            raise base
+        data = split_yesterday(base)
+        if isinstance(multi, BaseException):
+            import logging
+
+            logging.warning("Среднее: модели не ответили (%s) — показываю «Авто»", type(multi).__name__)
+            data["source"] = "mean_failed"
+            return data
+        cur_fc = owm_data if isinstance(owm_data, (list, tuple)) else (None, None)
+        return ensemble.apply(data, split_yesterday(multi), *cur_fc)
 
     async def fetch_owm(self, place: Place) -> tuple[dict, dict]:
         """Текущая погода и прогноз на 5 дней OpenWeatherMap (owm.py); нет ключа — owm.NoKey."""
