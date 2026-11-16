@@ -11,6 +11,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import core
+import owm
 from charts import models_chart
 from core import back_markup, for_city, place_name
 from places import build_cb
@@ -66,14 +67,21 @@ async def send_radar(m: Message, place: Place):
 async def send_models(m: Message, place: Place):
     try:
         data = await core.client.fetch_models(place, SPREAD_MODELS, 7)
-        png = await asyncio.to_thread(models_chart, place.name, data, SPREAD_MODELS,
-                                      {k: label(k) for k in SPREAD_MODELS})
+        models = list(SPREAD_MODELS)
+        if owm.api_key():  # OpenWeatherMap — ещё одна линия; не ответил — без неё
+            try:
+                _, fc = await core.client.fetch_owm(place)
+                owm.add_series(data, fc)
+                models.append(owm.KEY)
+            except Exception as e:
+                owm.log_failure(e)
+        png = await asyncio.to_thread(models_chart, place.name, data, models, {k: label(k) for k in models})
     except Exception:
         logging.exception("models error")
         await m.answer("Не удалось получить прогноз моделей, попробуйте чуть позже 🙏")
         return
     await m.answer_photo(BufferedInputFile(png, "models.png"))
-    await m.answer(format_spread(escape(place.name), data), reply_markup=back_markup(place))
+    await m.answer(format_spread(escape(place.name), data, models), reply_markup=back_markup(place))
 
 
 # ---------- Итоги недели ----------

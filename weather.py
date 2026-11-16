@@ -45,7 +45,7 @@ class WeatherClient:
 
     def _model_param(self) -> dict:
         model = self.model_hook()
-        return {"models": model} if model and model != "best_match" else {}
+        return {"models": model} if model and model not in ("best_match", "owm") else {}
 
     retry_delays = (1.0, 3.0)  # повторы при временных сбоях Open-Meteo (5xx, таймаут, обрыв связи)
 
@@ -147,7 +147,27 @@ class WeatherClient:
             "past_days": 1,
             **self._model_param(),
         })
-        return split_yesterday(data)
+        data = split_yesterday(data)
+        if self.model_hook() == "owm":  # OpenWeatherMap поверх Open-Meteo; не вышло — остаётся Open-Meteo
+            import owm
+
+            try:
+                current, fc = await self.fetch_owm(place)
+                owm.overlay(data, current, fc)
+            except Exception as e:
+                owm.log_failure(e)
+                data["source"] = "owm_failed"
+        return data
+
+    async def fetch_owm(self, place: Place) -> tuple[dict, dict]:
+        """Текущая погода и прогноз на 5 дней OpenWeatherMap (owm.py); нет ключа — owm.NoKey."""
+        import owm
+
+        key = owm.api_key()
+        if not key:
+            raise owm.NoKey()
+        params = {"lat": place.lat, "lon": place.lon, "appid": key, "units": "metric"}
+        return await asyncio.gather(self._get(owm.CURRENT_URL, params), self._get(owm.FORECAST_URL, params))
 
     async def fetch_models(self, place: Place, models: list[str], days: int = 7) -> dict:
         """Прогноз сразу нескольких моделей: ключи вида temperature_2m_max_ecmwf_ifs025 (spread.py)."""

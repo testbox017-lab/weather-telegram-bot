@@ -2,7 +2,7 @@
 
 Для каждой модели из prefs.MODELS запрашивает прогноз и прогоняет через все форматтеры и графики бота.
 Печатает, какие поля модель не отдаёт (null), и падает ли что-нибудь. Ничего не меняет и не пишет.
-Если задан WAQI_TOKEN — проверяет и ближайшую станцию WAQI.
+Если задан WAQI_TOKEN — проверяет и ближайшую станцию WAQI; если OWM_API_KEY — OpenWeatherMap.
 """
 import asyncio
 import os
@@ -45,12 +45,24 @@ async def main():
     failed = 0
     async with aiohttp.ClientSession() as session:
         client = WeatherClient(session)
+        import owm
+
         for model in MODELS:
+            if model == owm.KEY and not owm.api_key():
+                print(f"\n=== {model} ===\n  OWM_API_KEY не задан — OpenWeatherMap пропущен")
+                continue
             client.model_hook = lambda m=model: m
             print(f"\n=== {model} ===")
             steps = []
             try:
                 d1 = await client.fetch(place, 1)
+                if model == owm.KEY:
+                    try:  # fetch при сбое OWM молча показывает Open-Meteo — здесь нужна сама ошибка
+                        await client.fetch_owm(place)
+                    except Exception as e:
+                        failed += 1
+                        print(f"  FAIL OpenWeatherMap: {owm.failure_text(e)}")
+                    print(f"  источник: {d1.get('source')}")
                 d7 = await client.fetch(place, 9)
                 day = date.today() + timedelta(days=3)
                 dd = await client.fetch_day(place, day)
@@ -112,12 +124,16 @@ async def main():
         from spread import SPREAD_MODELS, format_spread, label
         try:
             dm = await client.fetch_models(place, SPREAD_MODELS, 7)
+            models = list(SPREAD_MODELS)
+            if owm.api_key():
+                owm.add_series(dm, (await client.fetch_owm(place))[1])
+                models.append(owm.KEY)
             print("  null: " + (", ".join(nulls(dm.get("daily"))) or "нет"))
-            png = models_chart("X", dm, SPREAD_MODELS, {m: label(m) for m in SPREAD_MODELS})
+            png = models_chart("X", dm, models, {m: label(m) for m in models})
             out = Path(os.environ["DATA_DIR"]) / "models.png"
             out.write_bytes(png)
             print(f"  ok  график {len(png) // 1024} КБ → {out}")
-            print("  " + format_spread("X", dm).replace("\n", "\n  "))
+            print("  " + format_spread("X", dm, models).replace("\n", "\n  "))
         except Exception:
             failed += 1
             print("  FAIL модели:")

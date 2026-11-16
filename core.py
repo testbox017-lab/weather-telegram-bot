@@ -123,7 +123,8 @@ HELP = (
     "• /compare или 📊 Сравнить в «Моих местах» — все места в одном сообщении и на одном графике\n"
     "• /radar [город] или 🛰 Радар — снимок радара осадков (RainViewer) и когда начнётся или закончится "
     "дождь в ближайшие 3 часа\n"
-    "• /models [город] или 🧪 Модели — ECMWF, ICON и GFS на одном графике: где модели расходятся, "
+    "• /models [город] или 🧪 Модели — ECMWF, ICON и GFS (и OpenWeatherMap, если задан ключ) на одном "
+    "графике: где модели расходятся, "
     "прогноз менее надёжен\n"
     "• /review [город] или 📈 Итоги недели — погода за прошедшие 7 дней и насколько точным был прогноз "
     "на завтра. По воскресеньям в 20:00 бот присылает итоги сам (отключается в настройках)\n"
@@ -318,7 +319,13 @@ async def build_weather(place: Place, days: int, header: str = "", data: dict | 
         data = await client.fetch(place, days)
     text = header + format_forecast(place.name, data, days)
     model = prefs.current()["model"]
-    if model != "best_match":
+    if data.get("source") == "owm":
+        text += "\n<i>Источник: OpenWeatherMap (дальше 5 дней — Open-Meteo)</i>"
+    elif data.get("source") == "owm_failed":
+        text += "\n<i>OpenWeatherMap сейчас не ответил — показан прогноз Open-Meteo</i>"
+    elif model == "owm":
+        text += "\n<i>Прогноз Open-Meteo: OpenWeatherMap не даёт прогноза на отдельные даты</i>"
+    elif model != "best_match":
         text += f"\n<i>Модель прогноза: {model_label(model)}</i>"
     if days == 1:
         line = await norm_line(place, date.fromisoformat(data["daily"]["time"][0]) if data.get("daily") else None,
