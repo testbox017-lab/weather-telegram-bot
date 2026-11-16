@@ -8,10 +8,11 @@ matplotlib.use("Agg")  # без окон, только рендер в файл
 import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
 
+from i18n import N_, _, wd  # noqa: E402
+
 TEMP = "#e8590c"
 TEMP_MIN = "#1c7ed6"
 RAIN = "#74c0fc"
-DAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
 def _png(fig) -> bytes:
@@ -55,10 +56,10 @@ def hourly_chart(name: str, data: dict, hours: int = 24, title: str | None = Non
     ax2.bar(t, rain, width=1 / 26, color=RAIN, alpha=0.45)
     if use_prob:
         ax2.set_ylim(0, 100)
-        ax2.set_ylabel("Вероятность осадков, %", color="#4dabf7")
+        ax2.set_ylabel(_("Вероятность осадков, %"), color="#4dabf7")
     else:
         ax2.set_ylim(0, max(max(rain, default=0) * 2.5, 2))
-        ax2.set_ylabel("Осадки, мм", color="#4dabf7")
+        ax2.set_ylabel(_("Осадки, мм"), color="#4dabf7")
     t, temp = [x for x, _ in pairs], [v for _, v in pairs]
     ax2.spines["top"].set_visible(False)
     ax.set_zorder(ax2.get_zorder() + 1)
@@ -70,10 +71,10 @@ def hourly_chart(name: str, data: dict, hours: int = 24, title: str | None = Non
                     xytext=(0, 8), ha="center", fontsize=9, color=TEMP)
     lo, hi = min(temp), max(temp)
     ax.set_ylim(lo - 2, hi + 3)
-    ax.set_ylabel("Температура, °C", color=TEMP)
+    ax.set_ylabel(_("Температура, °C"), color=TEMP)
     ax.xaxis.set_major_locator(mdates.HourLocator(interval=3))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    _style(ax, title or f"{name}: ближайшие {hours} ч")
+    _style(ax, title or _("{name}: ближайшие {n} ч", name=name, n=hours))
     return _png(fig)
 
 
@@ -83,21 +84,21 @@ def daily_chart(name: str, data: dict, days: int = 7) -> bytes:
     dates = [datetime.fromisoformat(x) for x in d["time"][:days]]
     tmax, tmin = d["temperature_2m_max"][:days], d["temperature_2m_min"][:days]
     rain = [x or 0 for x in d.get("precipitation_sum", [0] * days)[:days]]
-    labels = [f"{DAYS_RU[x.weekday()]}\n{x:%d.%m}" for x in dates]
+    labels = [f"{wd(x.weekday())}\n{x:%d.%m}" for x in dates]
     xs = range(len(dates))
 
     fig, ax = plt.subplots(figsize=(9, 4.2))
     ax2 = ax.twinx()
     ax2.bar(xs, rain, width=0.5, color=RAIN, alpha=0.45)
     ax2.set_ylim(0, max(max(rain) * 2.5, 5))
-    ax2.set_ylabel("Осадки, мм", color="#4dabf7")
+    ax2.set_ylabel(_("Осадки, мм"), color="#4dabf7")
     ax2.spines["top"].set_visible(False)
     ax.set_zorder(ax2.get_zorder() + 1)
     ax.patch.set_visible(False)
 
     ax.fill_between(xs, tmin, tmax, color=TEMP, alpha=0.12)
-    ax.plot(xs, tmax, color=TEMP, lw=2.5, marker="o", label="Днём (макс.)")
-    ax.plot(xs, tmin, color=TEMP_MIN, lw=2.5, marker="o", label="Ночью (мин.)")
+    ax.plot(xs, tmax, color=TEMP, lw=2.5, marker="o", label=_("Днём (макс.)"))
+    ax.plot(xs, tmin, color=TEMP_MIN, lw=2.5, marker="o", label=_("Ночью (мин.)"))
     for i in xs:
         ax.annotate(f"{round(tmax[i])}°", (i, tmax[i]), textcoords="offset points",
                     xytext=(0, 8), ha="center", fontsize=9, color=TEMP)
@@ -105,21 +106,21 @@ def daily_chart(name: str, data: dict, days: int = 7) -> bytes:
                     xytext=(0, -15), ha="center", fontsize=9, color=TEMP_MIN)
     ax.set_ylim(min(tmin) - 4, max(tmax) + 4)
     ax.set_xticks(list(xs), labels)
-    ax.set_ylabel("Температура, °C")
+    ax.set_ylabel(_("Температура, °C"))
     ax.legend(loc="upper left", frameon=False, fontsize=9, ncol=2)
-    _style(ax, f"{name}: прогноз на {len(dates)} дн.")
+    _style(ax, _("{name}: прогноз на {n} дн.", name=name, n=len(dates)))
     return _png(fig)
 
 
 WIND = "#2f9e44"
 GUST = "#868e96"
 HUM = "#1971c2"
-COMPASS = ["С", "СВ", "В", "ЮВ", "Ю", "ЮЗ", "З", "СЗ"]
+COMPASS = [N_("С"), N_("СВ"), N_("В"), N_("ЮВ"), N_("Ю"), N_("ЮЗ"), N_("З"), N_("СЗ")]
 
 
 def compass(deg: float) -> str:
     """Направление, ОТКУДА дует ветер: 0° = северный."""
-    return COMPASS[round(deg / 45) % 8]
+    return _(COMPASS[round(deg / 45) % 8])
 
 
 def _clean(xs):
@@ -140,7 +141,7 @@ def wind_humidity_chart(name: str, data: dict, days: int = 1, hours: int = 24,
         hum = _clean(h["relative_humidity_2m"][sl])
         hum_lo = hum_hi = None
         step, labels = 3, None
-        title = title or f"{name}: ветер и влажность, {hours} ч"
+        title = title or _("{name}: ветер и влажность, {n} ч", name=name, n=hours)
     else:
         d = data["daily"]
         dates = [datetime.fromisoformat(x) for x in d["time"][:days]]
@@ -152,8 +153,8 @@ def wind_humidity_chart(name: str, data: dict, days: int = 1, hours: int = 24,
         hum_lo = _clean(d.get("relative_humidity_2m_min", hum)[:days])
         hum_hi = _clean(d.get("relative_humidity_2m_max", hum)[:days])
         step = 1
-        labels = [f"{DAYS_RU[x.weekday()]}\n{x:%d.%m}" for x in dates]
-        title = title or f"{name}: ветер и влажность на {len(dates)} дн."
+        labels = [f"{wd(x.weekday())}\n{x:%d.%m}" for x in dates]
+        title = title or _("{name}: ветер и влажность на {n} дн.", name=name, n=len(dates))
 
     fig, (aw, ah) = plt.subplots(2, 1, figsize=(9, 6), sharex=True,
                                  gridspec_kw={"height_ratios": [3, 2], "hspace": 0.12})
@@ -161,11 +162,11 @@ def wind_humidity_chart(name: str, data: dict, days: int = 1, hours: int = 24,
     # --- ветер
     top = max(max(gust), max(speed), 1) * 1.6
     aw.fill_between(xs, speed, gust, color=GUST, alpha=0.12)
-    aw.plot(xs, gust, color=GUST, lw=1.5, ls="--", label="Порывы")
+    aw.plot(xs, gust, color=GUST, lw=1.5, ls="--", label=_("Порывы"))
     aw.plot(xs, speed, color=WIND, lw=2.5, marker="o", ms=3.5 if days <= 1 else 6,
-            label="Ветер (макс.)" if days > 1 else "Ветер")
+            label=_("Ветер (макс.)") if days > 1 else _("Ветер"))
     aw.set_ylim(0, top)
-    aw.set_ylabel("Ветер, м/с", color=WIND)
+    aw.set_ylabel(_("Ветер, м/с"), color=WIND)
     row = top * 0.86
     for i in range(0, len(xs), step):
         # стрелка показывает, КУДА дует ветер (метео-направление + 180°)
@@ -180,17 +181,17 @@ def wind_humidity_chart(name: str, data: dict, days: int = 1, hours: int = 24,
 
     # --- влажность
     if hum_lo is not None:
-        ah.fill_between(xs, hum_lo, hum_hi, color=HUM, alpha=0.12, label="Мин–макс")
+        ah.fill_between(xs, hum_lo, hum_hi, color=HUM, alpha=0.12, label=_("Мин–макс"))
     else:
         ah.fill_between(xs, 0, hum, color=HUM, alpha=0.10)
     ah.plot(xs, hum, color=HUM, lw=2.5, marker="o", ms=3.5 if days <= 1 else 6,
-            label="Средняя" if days > 1 else None)
+            label=_("Средняя") if days > 1 else None)
     for i in range(0, len(xs), step):
         ah.annotate(f"{round(hum[i])}%", (xs[i], hum[i]), textcoords="offset points",
                     xytext=(0, 7), ha="center", fontsize=8, color=HUM)
     ah.set_ylim(0, 112)
     ah.set_yticks([0, 25, 50, 75, 100])
-    ah.set_ylabel("Влажность, %", color=HUM)
+    ah.set_ylabel(_("Влажность, %"), color=HUM)
     if hum_lo is not None:
         ah.legend(loc="lower left", frameon=False, fontsize=9, ncol=2)
     ah.grid(axis="y", alpha=0.3)
@@ -221,12 +222,12 @@ def compare_chart(series: list[tuple[str, list[str], list, list]], days: int = 7
         ax.plot(xs, hi, color=color, lw=2.3, marker="o", ms=4, label=name)
         ax.plot(xs, lo, color=color, lw=1.4, ls="--", alpha=0.8)
         if len(times) > len(labels):
-            labels = [f"{DAYS_RU[datetime.fromisoformat(t).weekday()]}\n{datetime.fromisoformat(t):%d.%m}"
+            labels = [f"{wd(datetime.fromisoformat(t).weekday())}\n{datetime.fromisoformat(t):%d.%m}"
                       for t in times[:len(xs)]]
     ax.set_xticks(list(range(len(labels))), labels)
-    ax.set_ylabel("Температура, °C")
+    ax.set_ylabel(_("Температура, °C"))
     ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), frameon=False, fontsize=9)
-    _style(ax, "Мои места: днём (линия) и ночью (пунктир)")
+    _style(ax, _("Мои места: днём (линия) и ночью (пунктир)"))
     return _png(fig)
 
 
@@ -247,17 +248,17 @@ def models_chart(name: str, data: dict, models: list[str], labels: dict[str, str
         if len(vals) >= 2:
             xs.append(t), lo.append(min(vals)), hi.append(max(vals))
     if xs:
-        ax.fill_between(xs, lo, hi, color="#adb5bd", alpha=0.3, lw=0, label="разброс")
+        ax.fill_between(xs, lo, hi, color="#adb5bd", alpha=0.3, lw=0, label=_("разброс"))
     for m in models:
         pts = [(t, v) for t, v in zip(times, cols[m]) if v is not None]
         if pts:
             ax.plot([p[0] for p in pts], [p[1] for p in pts], color=MODEL_COLORS.get(m, "#495057"), lw=1.6,
                     label=labels.get(m, m))
-    ax.set_ylabel("Температура, °C")
+    ax.set_ylabel(_("Температура, °C"))
     ax.xaxis.set_major_locator(mdates.DayLocator())
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
     ax.legend(loc="upper left", bbox_to_anchor=(1.01, 1), frameon=False, fontsize=9)
-    _style(ax, f"{name}: прогноз разных моделей")
+    _style(ax, _("{name}: прогноз разных моделей", name=name))
 
     days = [datetime.fromisoformat(t) for t in daily.get("time") or []]
     width = 0.8 / max(len(models), 1)
@@ -266,9 +267,10 @@ def models_chart(name: str, data: dict, models: list[str], labels: dict[str, str
         pos = [j + (k - (len(models) - 1) / 2) * width for j in range(len(days))]
         ar.bar(pos, [(col[j] if j < len(col) and col[j] is not None else 0) for j in range(len(days))],
                width=width, color=MODEL_COLORS.get(m, "#495057"), alpha=0.75)
-    ar.set_xticks(list(range(len(days))), [f"{DAYS_RU[d.weekday()]}\n{d:%d.%m}" for d in days], fontsize=8)
-    ar.set_ylabel("Осадки, мм")
+    ar.set_xticks(list(range(len(days))), [f"{wd(d.weekday())}\n{d:%d.%m}" for d in days], fontsize=8)
+    ar.set_ylabel(_("Осадки, мм"))
     ar.set_ylim(0, max(2, ar.get_ylim()[1]))
-    _style(ar, "Осадки за сутки")
+    _style(ar, _("Осадки за сутки"))
+
     fig.tight_layout()
     return _png(fig)

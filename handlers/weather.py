@@ -13,8 +13,9 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 
 import core
 from air import format_air, format_waqi
-from core import (BTN_HELP, BTN_NOW, BTN_WEEK, HELP, back_markup, choices, drop_prompt, for_city, keyboard, place_name,
-                  refresh_weather, reply_for_last, reply_for_place, with_place)
+from core import (BTN_HELP, BTN_NOW, BTN_WEEK, back_markup, choices, drop_prompt, for_city, help_text, keyboard, menu,
+                  place_name, refresh_weather, reply_for_last, reply_for_place, with_place)
+from i18n import _
 from places import build_cb, parse_cb
 from weather import Place, format_hourly
 from table import format_table
@@ -25,26 +26,27 @@ router = Router(name="weather")
 
 @router.message(CommandStart())
 async def start(m: Message):
-    await m.answer(f"Привет, {escape(m.from_user.first_name or '')}! 👋\n\n{HELP}", reply_markup=keyboard)
+    await m.answer(_("Привет, {name}! 👋", name=escape(m.from_user.first_name or "")) + "\n\n" + help_text(),
+                   reply_markup=keyboard())
 
 
 @router.message(Command("help"))
 async def help_cmd(m: Message):
-    await m.answer(HELP, reply_markup=keyboard)
+    await m.answer(help_text(), reply_markup=keyboard())
 
 
 
 @router.callback_query(F.data.startswith("pk:"))
 async def on_choice_button(cb: CallbackQuery):
     try:
-        _, choice_id, index = cb.data.split(":")
+        _kind, choice_id, index = cb.data.split(":")
         choice_id, index = int(choice_id), int(index)
     except ValueError:
         choice_id, index = 0, 0
     pending = choices.get(cb.from_user.id)
     if not pending or pending[0] != choice_id or not 0 <= index < len(pending[1]) \
             or not isinstance(cb.message, Message):
-        await cb.answer("Этот список устарел — напишите название ещё раз", show_alert=True)
+        await cb.answer(_("Этот список устарел — напишите название ещё раз"), show_alert=True)
         return
     choices.pop(cb.from_user.id, None)
     place, action = pending[1][index], pending[2]
@@ -76,10 +78,10 @@ async def on_cancel(cb: CallbackQuery, state: FSMContext):
         await drop_prompt(cb.bot, cb.message.chat.id, state)  # «Отмена» под более старым вопросом
     await state.clear()
     choices.pop(cb.from_user.id, None)
-    await cb.answer("Отменено")
+    await cb.answer(_("Отменено"))
     if isinstance(cb.message, Message):
         try:
-            await cb.message.edit_text("Отменено.")
+            await cb.message.edit_text(_("Отменено."))
         except Exception:
             pass
 
@@ -89,7 +91,7 @@ async def send_air(m: Message, place: Place):
     """Качество воздуха из источника, выбранного в /settings: Open-Meteo, станция WAQI или выключено."""
     source = core.prefs.current()["air"]
     if source == "off":
-        await m.answer("🌫 Качество воздуха выключено. Включить — /settings")
+        await m.answer(_("🌫 Качество воздуха выключено. Включить — /settings"))
         return
     token = os.getenv("WAQI_TOKEN", "").strip()
     if source == "waqi" and token:
@@ -101,15 +103,15 @@ async def send_air(m: Message, place: Place):
                            reply_markup=back_markup(place))
             return
         logging.error("waqi error: %r", station)
-        note = "⚠️ WAQI сейчас не отвечает — показываю данные Open-Meteo.\n\n"
+        note = _("⚠️ WAQI сейчас не отвечает — показываю данные Open-Meteo.") + "\n\n"
     else:
-        note = ("⚠️ Для WAQI на сервере не задан токен (WAQI_TOKEN) — показываю данные Open-Meteo.\n\n"
+        note = (_("⚠️ Для WAQI на сервере не задан токен (WAQI_TOKEN) — показываю данные Open-Meteo.") + "\n\n"
                 if source == "waqi" else "")
     try:
         data = await core.client.fetch_air(place)
     except Exception:
         logging.exception("air error")
-        await m.answer("Не удалось получить данные о воздухе, попробуйте чуть позже 🙏")
+        await m.answer(_("Не удалось получить данные о воздухе, попробуйте чуть позже 🙏"))
         return
     await m.answer(note + format_air(escape(place.name), data), reply_markup=back_markup(place))
 
@@ -119,7 +121,7 @@ async def send_weekend(m: Message, place: Place):
         data = await core.client.fetch(place, 9)  # в воскресенье вечером нужен и следующий уикенд
     except Exception:
         logging.exception("weekend error")
-        await m.answer("Не удалось получить прогноз, попробуйте чуть позже 🙏")
+        await m.answer(_("Не удалось получить прогноз, попробуйте чуть позже 🙏"))
         return
     await m.answer(format_weekend(escape(place.name), data), reply_markup=back_markup(place))
 
@@ -130,7 +132,7 @@ async def send_table(m: Message, place: Place):
         data = await core.client.fetch(place, 4)  # ночь третьего дня — уже четвёртые сутки
     except Exception:
         logging.exception("table error")
-        await m.answer("Не удалось получить прогноз, попробуйте чуть позже 🙏")
+        await m.answer(_("Не удалось получить прогноз, попробуйте чуть позже 🙏"))
         return
     await m.answer(format_table(escape(place.name), data), reply_markup=back_markup(place))
 
@@ -157,10 +159,10 @@ async def on_air_weekend_button(cb: CallbackQuery):
         kind, lat, lon = cb.data.split(":")
         lat, lon = float(lat), float(lon)
     except ValueError:
-        await cb.answer("Кнопка устарела", show_alert=True)
+        await cb.answer(_("Кнопка устарела"), show_alert=True)
         return
     if not isinstance(cb.message, Message):
-        await cb.answer("Сообщение устарело, запросите прогноз заново", show_alert=True)
+        await cb.answer(_("Сообщение устарело, запросите прогноз заново"), show_alert=True)
         return
     await cb.answer()
     place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
@@ -183,20 +185,20 @@ async def weather_cmd(m: Message, command: CommandObject):
 async def by_location(m: Message):
     """Геолокация — погода в этой точке (для «Моих мест» её перехватывает роутер places)."""
     loc = m.location
-    await reply_for_place(m, Place("Ваше местоположение", loc.latitude, loc.longitude), 1, m.from_user.id)
+    await reply_for_place(m, Place(_("Ваше местоположение"), loc.latitude, loc.longitude), 1, m.from_user.id)
 
 
-@router.message(F.text == BTN_NOW)
+@router.message(menu(BTN_NOW))
 async def btn_now(m: Message):
     await reply_for_last(m, 1)
 
 
-@router.message(F.text == BTN_WEEK)
+@router.message(menu(BTN_WEEK))
 async def btn_week(m: Message):
     await reply_for_last(m, 7)
 
 
-@router.message(F.text == BTN_HELP)
+@router.message(menu(BTN_HELP))
 async def btn_help(m: Message):
     await help_cmd(m)
 
@@ -205,13 +207,13 @@ async def btn_help(m: Message):
 async def on_hourly_button(cb: CallbackQuery):
     """«⏱ По часам»: ближайшие 12 часов текстом, без картинок."""
     try:
-        _, lat, lon = cb.data.split(":")
+        _kind, lat, lon = cb.data.split(":")
         lat, lon = float(lat), float(lon)
     except ValueError:
-        await cb.answer("Кнопка устарела", show_alert=True)
+        await cb.answer(_("Кнопка устарела"), show_alert=True)
         return
     if not isinstance(cb.message, Message):
-        await cb.answer("Сообщение устарело, запросите прогноз заново", show_alert=True)
+        await cb.answer(_("Сообщение устарело, запросите прогноз заново"), show_alert=True)
         return
     await cb.answer()
     place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
@@ -219,10 +221,10 @@ async def on_hourly_button(cb: CallbackQuery):
         data = await core.client.fetch(place, 1)
     except Exception:
         logging.exception("hourly error")
-        await cb.message.answer("Не удалось получить погоду, попробуйте чуть позже 🙏")
+        await cb.message.answer(_("Не удалось получить погоду, попробуйте чуть позже 🙏"))
         return
     back = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text="🌤 Сейчас", callback_data=build_cb(1, lat, lon))]])
+        text=_("🌤 Сейчас"), callback_data=build_cb(1, lat, lon))]])
     await cb.message.answer(format_hourly(escape(place.name), data), reply_markup=back)
 
 
@@ -231,7 +233,7 @@ async def on_refresh_button(cb: CallbackQuery):
     """«🔄 Обновить»: тот же прогноз в тех же сообщениях, без нового сообщения."""
     parsed = parse_cb("w" + cb.data[1:])
     if not parsed or not isinstance(cb.message, Message):
-        await cb.answer("Кнопка устарела, запросите прогноз заново", show_alert=True)
+        await cb.answer(_("Кнопка устарела, запросите прогноз заново"), show_alert=True)
         return
     days, lat, lon = parsed
     place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
@@ -239,12 +241,12 @@ async def on_refresh_button(cb: CallbackQuery):
         done = await refresh_weather(cb.message, place, days, cb.from_user.id)
     except Exception as e:
         if "message is not modified" in str(e):
-            await cb.answer("Уже актуально")
+            await cb.answer(_("Уже актуально"))
             return
         logging.exception("refresh error")
         done = False
     if done:
-        await cb.answer("🔄 Обновлено")
+        await cb.answer(_("🔄 Обновлено"))
         return
     await cb.answer()
     await reply_for_place(cb.message, place, days, cb.from_user.id)
@@ -254,7 +256,8 @@ async def on_refresh_button(cb: CallbackQuery):
 async def on_forecast_button(cb: CallbackQuery):
     parsed = parse_cb(cb.data)
     if not parsed or not isinstance(cb.message, Message):
-        await cb.answer("Кнопка устарела, запросите прогноз заново", show_alert=True)
+        await cb.answer(_("Кнопка устарела, запросите прогноз заново"), show_alert=True)
+
         return
     await cb.answer()
     days, lat, lon = parsed

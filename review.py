@@ -10,7 +10,8 @@ import logging
 from datetime import date, timedelta
 from pathlib import Path
 
-from weather import DAYS_RU, Place
+from i18n import _, wd, wd_lower
+from weather import Place
 
 KEEP_DAYS = 35
 RAIN_MM = 0.5  # «были осадки» — от 0,5 мм за сутки
@@ -110,12 +111,12 @@ def format_review(name: str, past: dict, forecasts: dict[str, dict], logging_sin
             for i, t in enumerate(times) if i < len(tmax) and i < len(tmin)
             and tmax[i] is not None and tmin[i] is not None]
     if not rows:
-        return f"📈 <b>{name}</b>\nНет данных о прошедшей неделе 🤷"
-    out = [f"📈 <b>{name}</b> — итоги недели {rows[0][0]:%d.%m}–{rows[-1][0]:%d.%m}", ""]
+        return f"📈 <b>{name}</b>\n" + _("Нет данных о прошедшей неделе 🤷")
+    out = [_("📈 <b>{name}</b> — итоги недели {a:%d.%m}–{b:%d.%m}", name=name, a=rows[0][0], b=rows[-1][0]), ""]
     errs_hi, errs_lo, rain_hits, checked = [], [], 0, 0
     for d, hi, lo, p in rows:
-        rain = f", 💧 {p:.1f} мм" if p and p >= RAIN_MM else ""
-        line = f"{DAYS_RU[d.weekday()]} {d:%d.%m}: {_deg(lo)}…{_deg(hi)}°{rain}"
+        rain = _(", 💧 {mm:.1f} мм", mm=p) if p and p >= RAIN_MM else ""
+        line = f"{wd(d.weekday())} {d:%d.%m}: {_deg(lo)}…{_deg(hi)}°{rain}"
         f = forecasts.get(d.isoformat())
         if f:
             e_hi, e_lo = abs(f["tmax"] - hi), abs(f["tmin"] - lo)
@@ -123,26 +124,32 @@ def format_review(name: str, past: dict, forecasts: dict[str, dict], logging_sin
             errs_hi.append(e_hi), errs_lo.append(e_lo)
             rain_hits += rain_ok
             checked += 1
-            frain = ", с осадками" if (f.get("prec") or 0) >= RAIN_MM else ""
-            line += f"  {day_mark(max(e_hi, e_lo), rain_ok)} прогноз {_deg(f['tmin'])}…{_deg(f['tmax'])}°{frain}"
+            frain = _(", с осадками") if (f.get("prec") or 0) >= RAIN_MM else ""
+            line += _("  {mark} прогноз {lo}…{hi}°{rain}", mark=day_mark(max(e_hi, e_lo), rain_ok),
+                      lo=_deg(f['tmin']), hi=_deg(f['tmax']), rain=frain)
         out.append(line)
     mean = sum((hi + lo) / 2 for _, hi, lo, _ in rows) / len(rows)
     warm = max(rows, key=lambda r: r[1])
     cold = min(rows, key=lambda r: r[2])
     total = sum(r[3] or 0 for r in rows)
     wet_days = sum(1 for r in rows if (r[3] or 0) >= RAIN_MM)
-    out += ["", f"🌡 Средняя температура {mean:+.1f}°. Теплее всего — {DAYS_RU[warm[0].weekday()].lower()} "
-                f"({_deg(warm[1])}°), холоднее всего — {DAYS_RU[cold[0].weekday()].lower()} ({_deg(cold[2])}°)"]
-    out.append(f"💧 Осадки: {total:.1f} мм, {wet_days} дн. из {len(rows)}" if wet_days else "💧 Неделя без осадков")
+    out += ["", _("🌡 Средняя температура {mean:+.1f}°. Теплее всего — {wd1} ({t1}°), холоднее всего — {wd2} ({t2}°)",
+                  mean=mean, wd1=wd_lower(warm[0].weekday()), t1=_deg(warm[1]),
+                  wd2=wd_lower(cold[0].weekday()), t2=_deg(cold[2]))]
+    out.append(_("💧 Осадки: {mm:.1f} мм, {n} дн. из {total}", mm=total, n=wet_days, total=len(rows)) if wet_days
+               else _("💧 Неделя без осадков"))
     if checked:
-        out += ["", f"🎯 Прогноз на завтра ({checked} дн.): ошибка днём в среднем {sum(errs_hi) / checked:.1f}°, "
-                    f"ночью {sum(errs_lo) / checked:.1f}°; осадки угаданы в {rain_hits} из {checked}",
-                "✅ ошибка до 2° и осадки угаданы · 🟡 до 4° · ❌ больше 4°"]
+        out += ["", _("🎯 Прогноз на завтра ({n} дн.): ошибка днём в среднем {hi:.1f}°, ночью {lo:.1f}°; "
+                      "осадки угаданы в {hits} из {n}", n=checked, hi=sum(errs_hi) / checked,
+                      lo=sum(errs_lo) / checked, hits=rain_hits),
+                _("✅ ошибка до 2° и осадки угаданы · 🟡 до 4° · ❌ больше 4°")]
     elif logging_since:
-        out += ["", f"🎯 Точность прогноза: бот записывает прогнозы с {date.fromisoformat(logging_since):%d.%m}, "
-                    "для этого места записей пока нет. Записываются места из ⭐ Моих мест, рассылок и предупреждений."]
+        out += ["", _("🎯 Точность прогноза: бот записывает прогнозы с {d:%d.%m}, для этого места записей пока нет. "
+                      "Записываются места из ⭐ Моих мест, рассылок и предупреждений.",
+                      d=date.fromisoformat(logging_since))]
     else:
-        out += ["", "🎯 Точность прогноза появится через день: бот начал записывать прогнозы на завтра для "
-                    "⭐ Моих мест, рассылок и предупреждений."]
-    out.append("Фактическая погода — по данным Open-Meteo (модели с учётом наблюдений).")
+        out += ["", _("🎯 Точность прогноза появится через день: бот начал записывать прогнозы на завтра для "
+                      "⭐ Моих мест, рассылок и предупреждений.")]
+    out.append(_("Фактическая погода — по данным Open-Meteo (модели с учётом наблюдений)."))
+
     return "\n".join(out)

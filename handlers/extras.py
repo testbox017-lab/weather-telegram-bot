@@ -14,6 +14,7 @@ import core
 import owm
 from charts import models_chart
 from core import back_markup, for_city, place_name
+from i18n import _
 from places import build_cb
 from radar import RING_KM, nowcast_text, radar_image
 from review import format_review, key
@@ -31,8 +32,8 @@ def _markup(kind: str, place: Place, refresh: str) -> InlineKeyboardMarkup:
     b = InlineKeyboardButton
     return InlineKeyboardMarkup(inline_keyboard=[
         [b(text=refresh, callback_data=f"{kind}:{place.lat:.3f}:{place.lon:.3f}")],
-        [b(text="🌤 Сейчас", callback_data=build_cb(1, place.lat, place.lon)),
-         b(text="📅 Неделя", callback_data=build_cb(7, place.lat, place.lon))]])
+        [b(text=_("🌤 Сейчас"), callback_data=build_cb(1, place.lat, place.lon)),
+         b(text=_("📅 Неделя"), callback_data=build_cb(7, place.lat, place.lon))]])
 
 
 # ---------- Радар ----------
@@ -42,7 +43,7 @@ async def send_radar(m: Message, place: Place):
                                           core.client.fetch_nowcast(place), return_exceptions=True)
     if isinstance(nowcast, Exception):
         logging.error("nowcast error: %r", nowcast)
-        rain = "Прогноз осадков на ближайшие часы сейчас недоступен 🙏"
+        rain = _("Прогноз осадков на ближайшие часы сейчас недоступен 🙏")
         offset = 0
     else:
         rain = nowcast_text(nowcast)
@@ -50,16 +51,16 @@ async def send_radar(m: Message, place: Place):
     name = escape(place.name)
     if isinstance(image, Exception):
         logging.error("radar error: %r", image)
-        await m.answer(f"🛰 <b>{name}</b>\n{rain}\n\nСнимок радара сейчас недоступен, попробуйте чуть позже 🙏",
-                       reply_markup=_markup("rd", place, "🔄 Ещё раз"))
+        await m.answer(f"🛰 <b>{name}</b>\n{rain}\n\n" + _("Снимок радара сейчас недоступен, попробуйте чуть позже 🙏"),
+                       reply_markup=_markup("rd", place, _("🔄 Ещё раз")))
         return
     png, taken = image
     local = taken + timedelta(seconds=offset)
-    caption = (f"🛰 <b>{name}</b> — радар осадков, снимок {local:%H:%M}\n{rain}\n\n"
-               f"Красная точка — место, круг — {RING_KM} км. Синие и жёлтые пятна — осадки "
-               "(чем ярче, тем сильнее). Новый снимок каждые 10 минут.")
+    caption = (_("🛰 <b>{name}</b> — радар осадков, снимок {t:%H:%M}", name=name, t=local) + f"\n{rain}\n\n"
+               + _("Красная точка — место, круг — {km} км. Синие и жёлтые пятна — осадки "
+                   "(чем ярче, тем сильнее). Новый снимок каждые 10 минут.", km=RING_KM))
     await m.answer_photo(BufferedInputFile(png, "radar.png"), caption=caption,
-                         reply_markup=_markup("rd", place, "🔄 Обновить радар"))
+                         reply_markup=_markup("rd", place, _("🔄 Обновить радар")))
 
 
 # ---------- Сравнение моделей ----------
@@ -70,7 +71,7 @@ async def send_models(m: Message, place: Place):
         models = list(SPREAD_MODELS)
         if owm.api_key():  # OpenWeatherMap — ещё одна линия; не ответил — без неё
             try:
-                _, fc = await core.client.fetch_owm(place)
+                _cur, fc = await core.client.fetch_owm(place)
                 owm.add_series(data, fc)
                 models.append(owm.KEY)
             except Exception as e:
@@ -78,7 +79,7 @@ async def send_models(m: Message, place: Place):
         png = await asyncio.to_thread(models_chart, place.name, data, models, {k: label(k) for k in models})
     except Exception:
         logging.exception("models error")
-        await m.answer("Не удалось получить прогноз моделей, попробуйте чуть позже 🙏")
+        await m.answer(_("Не удалось получить прогноз моделей, попробуйте чуть позже 🙏"))
         return
     await m.answer_photo(BufferedInputFile(png, "models.png"))
     await m.answer(format_spread(escape(place.name), data, models), reply_markup=back_markup(place))
@@ -96,7 +97,7 @@ async def send_review(m: Message, place: Place):
         text = await review_text(place)
     except Exception:
         logging.exception("review error")
-        await m.answer("Не удалось получить погоду за неделю, попробуйте чуть позже 🙏")
+        await m.answer(_("Не удалось получить погоду за неделю, попробуйте чуть позже 🙏"))
         return
     await m.answer(text, reply_markup=back_markup(place))
 
@@ -122,10 +123,10 @@ async def on_extras_button(cb: CallbackQuery):
         kind, lat, lon = cb.data.split(":")
         lat, lon = float(lat), float(lon)
     except ValueError:
-        await cb.answer("Кнопка устарела", show_alert=True)
+        await cb.answer(_("Кнопка устарела"), show_alert=True)
         return
     if not isinstance(cb.message, Message):
-        await cb.answer("Сообщение устарело, запросите прогноз заново", show_alert=True)
+        await cb.answer(_("Сообщение устарело, запросите прогноз заново"), show_alert=True)
         return
     await cb.answer()
     place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
@@ -180,17 +181,22 @@ async def send_reviews(bot: Bot, now: datetime) -> int:
         if not places or core.prefs.get(uid)["review"] != "on" or core.forecast_log.sent(uid) == today:
             continue
         core.forecast_log.mark_sent(uid, today)  # и при ошибке: второй раз за вечер не пытаемся
-        for place in places:
-            try:
-                text = await review_text(place)
-                await bot.send_message(uid, text, reply_markup=back_markup(place))
-                n += 1
-            except TelegramForbiddenError:
-                break
-            except Exception:
-                logging.exception("weekly review error")
-            await asyncio.sleep(0.3)
+        token = core.current_user.set(uid)  # язык и модель — по настройкам получателя
+        try:
+            for place in places:
+                try:
+                    text = await review_text(place)
+                    await bot.send_message(uid, text, reply_markup=back_markup(place))
+                    n += 1
+                except TelegramForbiddenError:
+                    break
+                except Exception:
+                    logging.exception("weekly review error")
+                await asyncio.sleep(0.3)
+        finally:
+            core.current_user.reset(token)
     return n
+
 
 
 async def forecast_logger(bot: Bot, every: float = 1800):

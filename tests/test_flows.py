@@ -4,7 +4,7 @@ Telegram подменён сессией, которая записывает з
 """
 import os
 import tempfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -365,3 +365,39 @@ async def test_settings_review_toggle(tg):
     await tg.press("cfg:review:off")
     assert core.prefs.get(UID)["review"] == "off"
     assert "ИТОГИ НЕДЕЛИ" in tg.session.texts()[-1]
+
+
+@pytest.mark.asyncio
+async def test_language_switch(tg, recorded):
+    from aiogram.methods import SendMessage, SetMyCommands
+
+    await tg.send("/language")
+    assert tg.session.texts()[-1].startswith("🌐")
+    await tg.press("cfg:lang:en")
+    assert core.prefs.get(UID)["lang"] == "en"
+    sent = [c for c in tg.session.calls if isinstance(c, SendMessage)][-1]
+    assert sent.text.startswith("✅ Language: English")
+    assert sent.reply_markup.keyboard[0][1].text == "🌤 Weather now"  # меню — уже по-английски
+    cmds = [c for c in tg.session.calls if isinstance(c, SetMyCommands)][-1]
+    assert cmds.scope.chat_id == UID and "Weather now" in cmds.commands[1].description
+    await tg.send("🌤 Weather now")  # кнопки узнаются на новом языке…
+    await tg.send("🌤 Погода сейчас")  # …и на старом (клавиатура в чате могла не обновиться)
+    assert recorded == [("last", 1), ("last", 1)]
+    await tg.send("/help")
+    assert tg.session.texts()[-1].startswith("I show the weather")
+    await tg.press("cfg:lang:uk")
+    assert "Мова: Українська" in tg.session.texts()[-1] or "МОВА" in tg.session.texts()[-1]
+    await tg.send("/settings")
+    assert "Налаштування" in tg.session.texts()[-1]
+    await tg.press("cfg:lang:ru")
+    await tg.send("/help")
+    assert tg.session.texts()[-1].startswith("Я показываю погоду")
+
+
+@pytest.mark.asyncio
+async def test_language_input_words(tg, recorded):
+    """Ответы на вопросы бота понимаются и по-украински, и по-английски."""
+    await tg.press("cfg:lang:en")
+    await tg.press(build_cal_cb("i", 51.18, 32.83))
+    await tg.send("tomorrow")
+    assert recorded[-1][0] == "day" and recorded[-1][2] == date.today() + timedelta(days=1)

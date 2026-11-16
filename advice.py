@@ -1,15 +1,16 @@
 """Совет по одежде по ощущаемой температуре, ветру, осадкам и УФ-индексу (простые правила)."""
+from i18n import N_, _
 
 SNOW_CODES = {71, 73, 75, 77, 85, 86}
 
 # (ощущается не выше, что надеть)
 LAYERS = [
-    (-15, "пуховик, шапка, шарф и варежки"),
-    (-5, "зимняя куртка, шапка и перчатки"),
-    (5, "тёплая куртка и шапка"),
-    (12, "куртка или пальто"),
-    (18, "лёгкая куртка или свитер"),
-    (24, "футболка, на вечер кофта"),
+    (-15, N_("пуховик, шапка, шарф и варежки")),
+    (-5, N_("зимняя куртка, шапка и перчатки")),
+    (5, N_("тёплая куртка и шапка")),
+    (12, N_("куртка или пальто")),
+    (18, N_("лёгкая куртка или свитер")),
+    (24, N_("футболка, на вечер кофта")),
 ]
 
 
@@ -45,7 +46,7 @@ def clothing(data: dict) -> str | None:
     feels = cur.get("apparent_temperature")
     if feels is None:
         return None
-    base = next((text for limit, text in LAYERS if feels <= limit), "лёгкая одежда, пейте больше воды")
+    base = _(next((text for limit, text in LAYERS if feels <= limit), N_("лёгкая одежда, пейте больше воды")))
     extra = []
     hours = upcoming(data, 12)
     wet = [h for h in hours if is_wet(h)] or ([cur] if (cur.get("precipitation") or 0) >= 0.1 else [])
@@ -54,14 +55,14 @@ def clothing(data: dict) -> str | None:
     windy = max(winds) >= 10 or max(gusts) >= 15
     snow = any(h.get("code", h.get("weather_code")) in SNOW_CODES for h in wet)
     if wet and snow:
-        extra.append("непромокаемая обувь")
+        extra.append(_("непромокаемая обувь"))
     elif wet:
-        extra.append("капюшон или дождевик — зонт вывернет ветром" if windy else "зонт")
+        extra.append(_("капюшон или дождевик — зонт вывернет ветром") if windy else _("зонт"))
     if windy and not (wet and not snow):
-        extra.append("одежда от ветра")
+        extra.append(_("одежда от ветра"))
     uv = ((data.get("daily") or {}).get("uv_index_max") or [None])[0]
     if uv is not None and uv >= 6:
-        extra.append("крем от солнца и очки")
+        extra.append(_("крем от солнца и очки"))
     text = ", ".join([base] + extra)
     return f"👕 {text[0].upper()}{text[1:]}"
 
@@ -74,16 +75,17 @@ def dew_tips(data: dict) -> list[str]:
         return []
     tips = []
     if dew >= 21:
-        tips.append(f"🥵 Очень душно: точка росы {round(dew)}°")
+        tips.append(_("🥵 Очень душно: точка росы {d}°", d=round(dew)))
     elif dew >= 18:
-        tips.append(f"😓 Душно: точка росы {round(dew)}°")
+        tips.append(_("😓 Душно: точка росы {d}°", d=round(dew)))
     hours = upcoming(data, 12)
     wind = cur.get("wind_speed_10m") or 0
     if t - dew <= 1 and wind < 3 and cur.get("weather_code") not in (45, 48):
-        tips.append("🌫 Воздух почти насыщен влагой — возможен туман")
+        tips.append(_("🌫 Воздух почти насыщен влагой — возможен туман"))
     temps = [h["temp"] for h in hours if h["temp"] is not None] + [t]
     cold = min(temps) <= 0 and max(temps) <= 3
     wet = any(is_wet(h) for h in hours) or (cur.get("precipitation") or 0) >= 0.1
     if cold and (wet or t - dew <= 1):
-        tips.append("🧊 Около нуля и влажно — возможен гололёд, осторожно на дорогах и тротуарах")
+        tips.append(_("🧊 Около нуля и влажно — возможен гололёд, осторожно на дорогах и тротуарах"))
+
     return tips

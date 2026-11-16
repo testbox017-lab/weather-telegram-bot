@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 from PIL import Image, ImageDraw
 
+from i18n import _
 from weather import NOMINATIM_UA
 
 MAPS_URL = "https://api.rainviewer.com/public/weather-maps.json"
@@ -169,27 +170,30 @@ def nowcast_text(data: dict, hours: int = 3) -> str:
     times, prec, snow = m.get("time") or [], m.get("precipitation") or [], m.get("snowfall") or []
     now = (data.get("current") or {}).get("time")
     if not times or not now:
-        return "Прогноза осадков по 15 минут для этого места нет 🤷"
+        return _("Прогноза осадков по 15 минут для этого места нет 🤷")
     start = datetime.fromisoformat(now)
     end = start + timedelta(hours=hours)
     slots = [(datetime.fromisoformat(t), prec[i] or 0, (snow[i] or 0) if i < len(snow) else 0)
              for i, t in enumerate(times) if i < len(prec)
              and start - timedelta(minutes=14) <= datetime.fromisoformat(t) < end]
     if not slots:
-        return "Прогноза осадков по 15 минут для этого места нет 🤷"
+        return _("Прогноза осадков по 15 минут для этого места нет 🤷")
     wet = [s for s in slots if s[1] >= WET_MM]
     if not wet:
-        return f"☀️ В ближайшие {hours} ч осадков не ожидается"
-    kind = "снег" if sum(s[2] for s in wet) > 0 else "дождь"
-    icon = "🌨" if kind == "снег" else "🌧"
+        return _("☀️ В ближайшие {n} ч осадков не ожидается", n=hours)
+    snow = sum(s[2] for s in wet) > 0
+    icon = "🌨" if snow else "🌧"
     peak = max(s[1] for s in wet)
     first, last = wet[0][0], wet[-1][0] + timedelta(minutes=15)
     raining_now = slots[0][1] >= WET_MM
     if raining_now:
         stop = next((s[0] for s in slots if s[1] < WET_MM), None)
-        when = f"Сейчас идёт {kind}" + (f", закончится около {stop:%H:%M}" if stop else
-                                         f" и не закончится в ближайшие {hours} ч")
+        when = _("Сейчас идёт снег") if snow else _("Сейчас идёт дождь")
+        when += (_(", закончится около {t:%H:%M}", t=stop) if stop else
+                 _(" и не закончится в ближайшие {n} ч", n=hours))
     else:
-        when = f"{kind.capitalize()} начнётся около {first:%H:%M}" + (
-            f", продлится до ~{last:%H:%M}" if last < end else "")
-    return f"{icon} {when}, до {peak:.1f} мм за 15 минут"
+        when = (_("Снег начнётся около {t:%H:%M}", t=first) if snow else
+                _("Дождь начнётся около {t:%H:%M}", t=first))
+        when += _(", продлится до ~{t:%H:%M}", t=last) if last < end else ""
+    return icon + " " + when + _(", до {mm:.1f} мм за 15 минут", mm=peak)
+

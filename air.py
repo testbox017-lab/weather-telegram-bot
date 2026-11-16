@@ -1,26 +1,28 @@
 """Качество воздуха и пыльца (Open-Meteo Air Quality API, модели CAMS)."""
 from __future__ import annotations
 
+from i18n import N_, _
+
 AIR_URL = "https://air-quality-api.open-meteo.com/v1/air-quality"
 POLLEN = {  # переменная → (название, пороги «низкая/средняя/высокая», зёрен/м³)
-    "birch_pollen": ("берёза", (10, 100, 500)),
-    "alder_pollen": ("ольха", (10, 100, 500)),
-    "grass_pollen": ("злаки", (5, 30, 100)),
-    "mugwort_pollen": ("полынь", (5, 30, 100)),
-    "ragweed_pollen": ("амброзия", (5, 20, 50)),
-    "olive_pollen": ("олива", (10, 100, 500)),
+    "birch_pollen": (N_("берёза"), (10, 100, 500)),
+    "alder_pollen": (N_("ольха"), (10, 100, 500)),
+    "grass_pollen": (N_("злаки"), (5, 30, 100)),
+    "mugwort_pollen": (N_("полынь"), (5, 30, 100)),
+    "ragweed_pollen": (N_("амброзия"), (5, 20, 50)),
+    "olive_pollen": (N_("олива"), (10, 100, 500)),
 }
 CURRENT = "european_aqi,pm2_5,pm10,nitrogen_dioxide,ozone," + ",".join(POLLEN)
 # Европейский индекс качества воздуха (EAQI): верхняя граница → оценка
-AQI_LEVELS = [(20, "🟢", "хороший"), (40, "🟢", "приемлемый"), (60, "🟡", "умеренный"),
-              (80, "🟠", "плохой"), (100, "🔴", "очень плохой"), (float("inf"), "🟣", "крайне плохой")]
+AQI_LEVELS = [(20, "🟢", N_("хороший")), (40, "🟢", N_("приемлемый")), (60, "🟡", N_("умеренный")),
+              (80, "🟠", N_("плохой")), (100, "🔴", N_("очень плохой")), (float("inf"), "🟣", N_("крайне плохой"))]
 AQI_ADVICE = {
-    "умеренный": "Чувствительным людям лучше сократить долгие нагрузки на улице.",
-    "плохой": "Лучше сократить пробежки и долгие прогулки, проветривать ненадолго.",
-    "очень плохой": "Лучше остаться дома и закрыть окна; на улице — без нагрузок.",
-    "крайне плохой": "Лучше остаться дома и закрыть окна; на улице — без нагрузок.",
+    "умеренный": N_("Чувствительным людям лучше сократить долгие нагрузки на улице."),
+    "плохой": N_("Лучше сократить пробежки и долгие прогулки, проветривать ненадолго."),
+    "очень плохой": N_("Лучше остаться дома и закрыть окна; на улице — без нагрузок."),
+    "крайне плохой": N_("Лучше остаться дома и закрыть окна; на улице — без нагрузок."),
 }
-POLLEN_WORDS = ["низкая", "средняя", "высокая", "очень высокая"]
+POLLEN_WORDS = [N_("низкая"), N_("средняя"), N_("высокая"), N_("очень высокая")]
 
 
 def aqi_level(aqi: float) -> tuple[str, str]:
@@ -51,31 +53,33 @@ def worst_ahead(data: dict, hours: int = 24) -> tuple[float, str] | None:
     if not pairs:
         return None
     v, t = max(pairs, key=lambda p: p[0])
-    when = f"около {t[11:16]}"
-    return v, (when if t[:10] == now[:10] else "завтра " + when)
+    if t[:10] == now[:10]:
+        return v, _("около {t}", t=t[11:16])
+    return v, _("завтра около {t}", t=t[11:16])
 
 
 def format_air(name: str, data: dict) -> str:
     cur = data.get("current") or {}
-    lines = [f"🌫 <b>Воздух — {name}</b>", ""]
+    lines = [_("🌫 <b>Воздух — {name}</b>", name=name), ""]
     aqi = cur.get("european_aqi")
     if aqi is None:
-        return "\n".join(lines + ["Нет данных о качестве воздуха для этого места 🤷"])
+        return "\n".join(lines + [_("Нет данных о качестве воздуха для этого места 🤷")])
     emoji, word = aqi_level(aqi)
-    lines.append(f"{emoji} Качество воздуха: <b>{word}</b> (индекс EAQI {round(aqi)})")
+    lines.append(_("{emoji} Качество воздуха: <b>{word}</b> (индекс EAQI {aqi})", emoji=emoji, word=_(word),
+                   aqi=round(aqi)))
     parts = []
     for key, label in (("pm2_5", "PM2.5"), ("pm10", "PM10"), ("nitrogen_dioxide", "NO₂"), ("ozone", "O₃")):
         if cur.get(key) is not None:
             parts.append(f"{label} {round(cur[key])}")
     if parts:
-        lines.append("🔬 " + ", ".join(parts) + " мкг/м³")
+        lines.append("🔬 " + ", ".join(parts) + _(" мкг/м³"))
     ahead = worst_ahead(data)
     if ahead and aqi_level(ahead[0])[1] != word and ahead[0] > aqi:
         e2, w2 = aqi_level(ahead[0])
-        lines.append(f"⏳ В ближайшие сутки ухудшится до «{w2}» {e2} {ahead[1]}")
+        lines.append(_("⏳ В ближайшие сутки ухудшится до «{w}» {e} {when}", w=_(w2), e=e2, when=ahead[1]))
     tip = AQI_ADVICE.get(word)
     if tip:
-        lines.append(f"💡 {tip}")
+        lines.append(f"💡 {_(tip)}")
 
     lines.append("")
     lines.append(pollen_line(cur))
@@ -85,17 +89,17 @@ def format_air(name: str, data: dict) -> str:
 def pollen_line(cur: dict) -> str:
     """«🌼 Пыльца: берёза — высокая (150)» по current из Open-Meteo Air Quality."""
     pollen = []
-    for var, (title, _) in POLLEN.items():
+    for var, (title, _limits) in POLLEN.items():
         v = cur.get(var)
         level = pollen_level(var, v) if v is not None else None
         if level:
-            pollen.append((POLLEN_WORDS.index(level), f"{title} — {level} ({round(v)})"))
+            pollen.append((POLLEN_WORDS.index(level), f"{_(title)} — {_(level)} ({round(v)})"))
     if pollen:
         pollen.sort(key=lambda p: -p[0])
-        return "🌼 Пыльца: " + "; ".join(p[1] for p in pollen)
+        return _("🌼 Пыльца: ") + "; ".join(p[1] for p in pollen)
     if any(cur.get(v) is not None for v in POLLEN):
-        return "🌼 Пыльцы в воздухе почти нет"
-    return "🌼 Прогноз пыльцы доступен только для Европы"
+        return _("🌼 Пыльцы в воздухе почти нет")
+    return _("🌼 Прогноз пыльцы доступен только для Европы")
 
 
 # ---------- WAQI (aqicn.org): измерения ближайшей станции ----------
@@ -103,8 +107,9 @@ def pollen_line(cur: dict) -> str:
 WAQI_URL = "https://api.waqi.info/feed/geo:{lat};{lon}/"
 WAQI_RADIUS_KM = 5  # станция дальше — значения не показываем
 # Индекс US AQI (EPA), который отдаёт WAQI: верхняя граница → оценка
-US_AQI_LEVELS = [(50, "🟢", "хороший"), (100, "🟡", "умеренный"), (150, "🟠", "вредный для чувствительных"),
-                 (200, "🔴", "вредный"), (300, "🟣", "очень вредный"), (float("inf"), "🟤", "опасный")]
+US_AQI_LEVELS = [(50, "🟢", N_("хороший")), (100, "🟡", N_("умеренный")),
+                 (150, "🟠", N_("вредный для чувствительных")),
+                 (200, "🔴", N_("вредный")), (300, "🟣", N_("очень вредный")), (float("inf"), "🟤", N_("опасный"))]
 US_AQI_ADVICE = {
     "вредный для чувствительных": AQI_ADVICE["умеренный"],
     "вредный": AQI_ADVICE["плохой"],
@@ -130,34 +135,37 @@ def distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 def format_waqi(name: str, data: dict, lat: float, lon: float, pollen: dict | None = None) -> str:
     """data — поле data ответа WAQI feed; pollen — current из Open-Meteo для строки о пыльце (или None)."""
-    lines = [f"🌫 <b>Воздух — {name}</b>", ""]
+    lines = [_("🌫 <b>Воздух — {name}</b>", name=name), ""]
     city = data.get("city") or {}
-    station = city.get("name") or "станция без названия"
+    station = city.get("name") or _("станция без названия")
     geo = city.get("geo") or []
     dist = distance_km(lat, lon, float(geo[0]), float(geo[1])) if len(geo) == 2 else None
     aqi = data.get("aqi")
     if dist is None or dist > WAQI_RADIUS_KM:
-        where = f": ближайшая — {station}, {dist:.0f} км" if dist is not None else ""
-        lines.append(f"📡 Станций WAQI в пределах {WAQI_RADIUS_KM} км нет{where}. "
-                     "Источник можно сменить в /settings.")
+        where = _(": ближайшая — {station}, {km:.0f} км", station=station, km=dist) if dist is not None else ""
+        lines.append(_("📡 Станций WAQI в пределах {r} км нет{where}. Источник можно сменить в /settings.",
+                       r=WAQI_RADIUS_KM, where=where))
     elif not isinstance(aqi, (int, float)):
-        lines.append(f"📡 Станция {station} ({dist:.1f} км) сейчас не передаёт данные 🤷")
+        lines.append(_("📡 Станция {station} ({km:.1f} км) сейчас не передаёт данные 🤷", station=station, km=dist))
     else:
         when = ((data.get("time") or {}).get("s") or "")[:16]
-        stamp = f", измерено {when[8:10]}.{when[5:7]} {when[11:16]}" if len(when) == 16 else ""
-        lines.append(f"📡 Станция: {station}, {dist:.1f} км{stamp}")
+        stamp = (_(", измерено {d}.{m} {t}", d=when[8:10], m=when[5:7], t=when[11:16])
+                 if len(when) == 16 else "")
+        lines.append(_("📡 Станция: {station}, {km:.1f} км{stamp}", station=station, km=dist, stamp=stamp))
         emoji, word = us_aqi_level(aqi)
-        lines.append(f"{emoji} Качество воздуха: <b>{word}</b> (индекс US AQI {round(aqi)})")
+        lines.append(_("{emoji} Качество воздуха: <b>{word}</b> (индекс US AQI {aqi})", emoji=emoji, word=_(word),
+                       aqi=round(aqi)))
         iaqi = data.get("iaqi") or {}
         parts = [f"{label} {round(iaqi[k]['v'])}" for k, label in
                  (("pm25", "PM2.5"), ("pm10", "PM10"), ("no2", "NO₂"), ("o3", "O₃"))
                  if isinstance((iaqi.get(k) or {}).get("v"), (int, float))]
         if parts:
-            lines.append("🔬 Индексы: " + ", ".join(parts))
+            lines.append(_("🔬 Индексы: ") + ", ".join(parts))
         tip = US_AQI_ADVICE.get(word)
         if tip:
-            lines.append(f"💡 {tip}")
+            lines.append(f"💡 {_(tip)}")
     if pollen is not None:
         lines += ["", pollen_line(pollen)]
-    lines += ["", "<i>Данные: World Air Quality Index Project (aqicn.org)</i>"]
+    lines += ["", _("<i>Данные: World Air Quality Index Project (aqicn.org)</i>")]
+
     return "\n".join(lines)
