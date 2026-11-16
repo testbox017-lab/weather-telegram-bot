@@ -4,9 +4,10 @@ import re
 import logging
 from pathlib import Path
 
+from i18n import N_, _
 from weather import Place
 
-DEFAULT_NAME = "Выбранное место"
+DEFAULT_NAME = N_("Выбранное место")  # переводится при показе: _(DEFAULT_NAME)
 
 
 class LastPlaces:
@@ -52,7 +53,7 @@ class LastPlaces:
         p = self.get(user_id)
         if p and round(p.lat, 3) == round(lat, 3) and round(p.lon, 3) == round(lon, 3):
             return p.name
-        return DEFAULT_NAME
+        return _(DEFAULT_NAME)
 
 
 def build_cb(days: int, lat: float, lon: float) -> str:
@@ -93,7 +94,8 @@ def parse_coords(text: str | None) -> tuple[float, float, str] | None:
 
 
 def coords_name(lat: float, lon: float) -> str:
-    return f"Точка {lat:.2f}, {lon:.2f}"
+    return _("Точка {lat:.2f}, {lon:.2f}", lat=lat, lon=lon)
+
 
 
 class Favorites:

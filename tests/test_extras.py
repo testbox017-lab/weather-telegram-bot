@@ -218,3 +218,10 @@ def test_waqi_station_too_far_or_silent():
 def test_us_aqi_levels():
     assert air.us_aqi_level(50)[1] == "хороший" and air.us_aqi_level(51)[1] == "умеренный"
     assert air.us_aqi_level(350)[1] == "опасный"
+
+
+def test_verdict_not_dry_when_snow_or_rain_coded():
+    assert "Сухо" not in weekend.verdict(71, 19, 5, 3)
+    assert "снег" in weekend.verdict(71, 19, 5, 3)
+    assert "Сухо" not in weekend.verdict(61, 20, 3, 8)
+    assert "Сухо" in weekend.verdict(3, 20, 3, 8)

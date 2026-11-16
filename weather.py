@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import aiohttp
 
+from i18n import N_, _, geo_lang, wd
+
 GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
 # OpenStreetMap: горы, станции, озёра, достопримечательности — когда геокодер Open-Meteo городов не нашёл.
 # Правила Nominatim: свой User-Agent и не чаще запроса в секунду.
@@ -12,22 +14,22 @@ NOMINATIM_UA = "MyWeatherOpenMeteobot/1.0 (personal Telegram weather bot; github
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
 WMO = {
-    0: ("Ясно", "☀️"), 1: ("Преимущественно ясно", "🌤"), 2: ("Переменная облачность", "⛅️"),
-    3: ("Пасмурно", "☁️"), 45: ("Туман", "🌫"), 48: ("Изморозь", "🌫"),
-    51: ("Слабая морось", "🌦"), 53: ("Морось", "🌦"), 55: ("Сильная морось", "🌧"),
-    56: ("Ледяная морось", "🌧"), 57: ("Сильная ледяная морось", "🌧"),
-    61: ("Небольшой дождь", "🌦"), 63: ("Дождь", "🌧"), 65: ("Сильный дождь", "🌧"),
-    66: ("Ледяной дождь", "🌧"), 67: ("Сильный ледяной дождь", "🌧"),
-    71: ("Небольшой снег", "🌨"), 73: ("Снег", "🌨"), 75: ("Сильный снег", "❄️"),
-    77: ("Снежные зёрна", "🌨"), 80: ("Небольшой ливень", "🌦"), 81: ("Ливень", "🌧"),
-    82: ("Сильный ливень", "⛈"), 85: ("Снегопад", "🌨"), 86: ("Сильный снегопад", "❄️"),
-    95: ("Гроза", "⛈"), 96: ("Гроза с градом", "⛈"), 99: ("Сильная гроза с градом", "⛈"),
+    0: (N_("Ясно"), "☀️"), 1: (N_("Преимущественно ясно"), "🌤"), 2: (N_("Переменная облачность"), "⛅️"),
+    3: (N_("Пасмурно"), "☁️"), 45: (N_("Туман"), "🌫"), 48: (N_("Изморозь"), "🌫"),
+    51: (N_("Слабая морось"), "🌦"), 53: (N_("Морось"), "🌦"), 55: (N_("Сильная морось"), "🌧"),
+    56: (N_("Ледяная морось"), "🌧"), 57: (N_("Сильная ледяная морось"), "🌧"),
+    61: (N_("Небольшой дождь"), "🌦"), 63: (N_("Дождь"), "🌧"), 65: (N_("Сильный дождь"), "🌧"),
+    66: (N_("Ледяной дождь"), "🌧"), 67: (N_("Сильный ледяной дождь"), "🌧"),
+    71: (N_("Небольшой снег"), "🌨"), 73: (N_("Снег"), "🌨"), 75: (N_("Сильный снег"), "❄️"),
+    77: (N_("Снежные зёрна"), "🌨"), 80: (N_("Небольшой ливень"), "🌦"), 81: (N_("Ливень"), "🌧"),
+    82: (N_("Сильный ливень"), "⛈"), 85: (N_("Снегопад"), "🌨"), 86: (N_("Сильный снегопад"), "❄️"),
+    95: (N_("Гроза"), "⛈"), 96: (N_("Гроза с градом"), "⛈"), 99: (N_("Сильная гроза с градом"), "⛈"),
 }
 
 
 def describe(code: int) -> str:
-    text, emoji = WMO.get(code, ("Неизвестно", "🌡"))
-    return f"{emoji} {text}"
+    text, emoji = WMO.get(code, (N_("Неизвестно"), "🌡"))
+    return f"{emoji} {_(text)}"
 
 
 @dataclass
@@ -64,7 +66,7 @@ class WeatherClient:
                 await asyncio.sleep(self.retry_delays[attempt])
 
     async def find_city(self, query: str) -> Place | None:
-        places, _ = await self.find_cities(query)
+        places, _obvious = await self.find_cities(query)
         return places[0] if places else None
 
     async def find_cities(self, query: str) -> tuple[list[Place], bool]:
@@ -75,7 +77,7 @@ class WeatherClient:
         from geo import candidates, split_query
 
         name = split_query(query)[0] or query
-        data = await self._get(GEO_URL, {"name": name, "count": 20, "language": "ru", "format": "json"})
+        data = await self._get(GEO_URL, {"name": name, "count": 20, "language": geo_lang(), "format": "json"})
         found = candidates(data.get("results") or [], query)
         if found[0]:
             return found
@@ -114,7 +116,7 @@ class WeatherClient:
                 await asyncio.sleep(wait)
             try:
                 data = await self._get(NOMINATIM_URL, {"q": query, "format": "jsonv2", "limit": MAX_CHOICES,
-                                                       "accept-language": "ru"},
+                                                       "accept-language": geo_lang()},
                                        headers={"User-Agent": NOMINATIM_UA})
             finally:
                 WeatherClient._osm_last = loop.time()
@@ -295,35 +297,33 @@ def _first(d: dict, key: str):
 def format_day(name: str, data: dict, day, archive: bool = False) -> str:
     """Сводка за одну дату (без блока «сейчас»)."""
     d = data.get("daily") or {}
-    lines = [f"📅 <b>Погода на {DAYS_RU[day.weekday()]} {day:%d.%m.%Y}</b> — {name}"]
+    lines = [_("📅 <b>Погода на {wd} {day:%d.%m.%Y}</b> — {name}", wd=wd(day.weekday()), day=day, name=name)]
     if archive:
-        lines.append("<i>фактические данные (архив)</i>")
+        lines.append(_("<i>фактические данные (архив)</i>"))
     lines.append("")
     code = _first(d, "weather_code")
     if code is not None:
         lines.append(describe(code))
     tmin, tmax = _first(d, "temperature_2m_min"), _first(d, "temperature_2m_max")
     if tmin is None or tmax is None:
-        return "\n".join(lines + ["Нет данных за эту дату 🤷"])
+        return "\n".join(lines + [_("Нет данных за эту дату 🤷")])
     lines.append(f"🌡 {round(tmin)}…{round(tmax)}°C")
     rain, prob = _first(d, "precipitation_sum"), _first(d, "precipitation_probability_max")
     if rain is not None:
-        line = f"☔️ Осадки: {rain:.1f} мм"
+        line = _("☔️ Осадки: {rain:.1f} мм", rain=rain)
         if prob is not None:
-            line += f", вероятность {prob}%"
+            line += _(", вероятность {prob}%", prob=prob)
         lines.append(line)
     wind, gust = _first(d, "wind_speed_10m_max"), _first(d, "wind_gusts_10m_max")
     if wind is not None:
-        lines.append(f"💨 Ветер до {wind:.1f} м/с" + (f", порывы до {gust:.1f} м/с" if gust is not None else ""))
+        lines.append(_("💨 Ветер до {wind:.1f} м/с", wind=wind)
+                     + (_(", порывы до {gust:.1f} м/с", gust=gust) if gust is not None else ""))
     hum = _first(d, "relative_humidity_2m_mean")
     if hum is not None:
         hlo, hhi = _first(d, "relative_humidity_2m_min"), _first(d, "relative_humidity_2m_max")
         rng = f" ({round(hlo)}–{round(hhi)}%)" if hlo is not None and hhi is not None else ""
-        lines.append(f"💧 Влажность: {round(hum)}%{rng}")
+        lines.append(_("💧 Влажность: {hum}%{rng}", hum=round(hum), rng=rng))
     return "\n".join(lines)
-
-
-DAYS_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
 
 
 def split_yesterday(data: dict) -> dict:
@@ -346,8 +346,8 @@ def split_yesterday(data: dict) -> dict:
     return data
 
 
-DIRS = [("северный", "↓"), ("северо-восточный", "↙"), ("восточный", "←"), ("юго-восточный", "↖"),
-        ("южный", "↑"), ("юго-западный", "↗"), ("западный", "→"), ("северо-западный", "↘")]
+DIRS = [(N_("северный"), "↓"), (N_("северо-восточный"), "↙"), (N_("восточный"), "←"), (N_("юго-восточный"), "↖"),
+        (N_("южный"), "↑"), (N_("юго-западный"), "↗"), (N_("западный"), "→"), (N_("северо-западный"), "↘")]
 
 
 def wind_dir(deg: float | None) -> str:
@@ -355,7 +355,7 @@ def wind_dir(deg: float | None) -> str:
     if deg is None:
         return ""
     name, arrow = DIRS[round(deg % 360 / 45) % 8]
-    return f"{arrow} {name}"
+    return f"{arrow} {_(name)}"
 
 
 def uv_text(uv: float | None) -> str | None:
@@ -363,16 +363,16 @@ def uv_text(uv: float | None) -> str | None:
         return None
     uv = round(uv)
     if uv <= 2:
-        level = "низкий"
+        level = _("низкий")
     elif uv <= 5:
-        level = "умеренный, нужен крем SPF 30"
+        level = _("умеренный, нужен крем SPF 30")
     elif uv <= 7:
-        level = "высокий, крем SPF 50 и головной убор"
+        level = _("высокий, крем SPF 50 и головной убор")
     elif uv <= 10:
-        level = "очень высокий, избегайте солнца в полдень"
+        level = _("очень высокий, избегайте солнца в полдень")
     else:
-        level = "экстремальный, лучше не выходить на солнце"
-    return f"🕶 УФ-индекс до {uv} — {level}"
+        level = _("экстремальный, лучше не выходить на солнце")
+    return _("🕶 УФ-индекс до {uv} — {level}", uv=uv, level=level)
 
 
 def visibility_text(m: float | None) -> str | None:
@@ -380,8 +380,8 @@ def visibility_text(m: float | None) -> str | None:
         return None
     if m >= 10_000:
         return None  # хорошую видимость не показываем, чтобы не засорять сводку
-    shown = f"{m / 1000:.1f} км" if m >= 1000 else f"{round(m)} м"
-    return f"👁 Видимость {shown}" + (" — туман" if m < 1000 else "")
+    shown = _("{km:.1f} км", km=m / 1000) if m >= 1000 else _("{m} м", m=round(m))
+    return _("👁 Видимость {shown}", shown=shown) + (_(" — туман") if m < 1000 else "")
 
 
 SNOW_CODES = {71, 73, 75, 77, 85, 86}
@@ -408,25 +408,26 @@ def rain_outlook(data: dict, hours: int = 12) -> str | None:
     idx = list(range(start, min(start + hours, n)))
     wet = [_is_wet(prec[i], prob[i]) for i in idx]
 
-    def kind(i: int) -> str:
-        return "снег" if codes[i] in SNOW_CODES else "дождь"
-
     def hh(i: int) -> str:
         return times[i][11:16]
 
     if (cur.get("precipitation") or 0) >= 0.1 or (wet and wet[0]):
         first = idx[0]
         stop = next((idx[j] for j, w in enumerate(wet) if not w), None)
-        what = "Снег" if (cur.get("weather_code") in SNOW_CODES or codes[first] in SNOW_CODES) else "Дождь"
+        snow = cur.get("weather_code") in SNOW_CODES or codes[first] in SNOW_CODES
         if stop is None:
-            return f"☔️ {what} идёт и не прекратится ближайшие {len(idx)} ч"
-        return f"☔️ {what} идёт, закончится около {hh(stop)}"
+            return (_("☔️ Снег идёт и не прекратится ближайшие {n} ч", n=len(idx)) if snow else
+                    _("☔️ Дождь идёт и не прекратится ближайшие {n} ч", n=len(idx)))
+        return (_("☔️ Снег идёт, закончится около {t}", t=hh(stop)) if snow else
+                _("☔️ Дождь идёт, закончится около {t}", t=hh(stop)))
     first_wet = next((idx[j] for j, w in enumerate(wet) if w), None)
     if first_wet is None:
-        return f"🌂 Без осадков ближайшие {len(idx)} ч"
+        return _("🌂 Без осадков ближайшие {n} ч", n=len(idx))
     p = prob[first_wet]
-    chance = f" (вероятность {p}%)" if p is not None else ""
-    return f"☔️ {kind(first_wet).capitalize()} начнётся около {hh(first_wet)}{chance}"
+    chance = _(" (вероятность {p}%)", p=p) if p is not None else ""
+    if codes[first_wet] in SNOW_CODES:
+        return _("☔️ Снег начнётся около {t}{chance}", t=hh(first_wet), chance=chance)
+    return _("☔️ Дождь начнётся около {t}{chance}", t=hh(first_wet), chance=chance)
 
 
 def yesterday_text(data: dict) -> str | None:
@@ -442,9 +443,10 @@ def yesterday_text(data: dict) -> str | None:
         return None
     diff = round(cur["temperature_2m"] - past)
     if diff == 0:
-        return "↔️ Так же, как вчера в это время"
-    word = "теплее" if diff > 0 else "холоднее"
-    return f"{'🔺' if diff > 0 else '🔻'} На {abs(diff)}° {word}, чем вчера в это время"
+        return _("↔️ Так же, как вчера в это время")
+    if diff > 0:
+        return _("🔺 На {n}° теплее, чем вчера в это время", n=diff)
+    return _("🔻 На {n}° холоднее, чем вчера в это время", n=-diff)
 
 
 def format_forecast(name: str, data: dict, days: int = 1) -> str:
@@ -466,27 +468,28 @@ def format_forecast(name: str, data: dict, days: int = 1) -> str:
     lines += [
         "",
         f"{describe(cur['weather_code'])}",
-        f"🌡 {round(cur['temperature_2m'])}°C (ощущается как {round(cur['apparent_temperature'])}°C)",
+        _("🌡 {t}°C (ощущается как {feels}°C)", t=round(cur['temperature_2m']),
+          feels=round(cur['apparent_temperature'])),
     ]
     compare = yesterday_text(data)
     if compare:
         lines.append(compare)
-    humidity = f"💧 Влажность: {cur['relative_humidity_2m']}%"
+    humidity = _("💧 Влажность: {hum}%", hum=cur['relative_humidity_2m'])
     if cur.get("dew_point_2m") is not None:
-        humidity += f", точка росы {round(cur['dew_point_2m'])}°"
+        humidity += _(", точка росы {dew}°", dew=round(cur['dew_point_2m']))
     lines.append(humidity)
-    wind = f"💨 Ветер: {cur['wind_speed_10m']:.1f} м/с"
+    wind = _("💨 Ветер: {wind:.1f} м/с", wind=cur['wind_speed_10m'])
     direction = wind_dir(cur.get("wind_direction_10m"))
     if direction:
         wind += f", {direction}"
     gust = cur.get("wind_gusts_10m")
     if gust is not None and gust >= cur["wind_speed_10m"] + 2:
-        wind += f", порывы до {gust:.0f} м/с"
+        wind += _(", порывы до {gust:.0f} м/с", gust=gust)
     lines.append(wind)
     if cur.get("pressure_msl") is not None:
-        lines.append(f"🧭 Давление: {round(cur['pressure_msl'] * 0.750062)} мм рт. ст.")
+        lines.append(_("🧭 Давление: {p} мм рт. ст.", p=round(cur['pressure_msl'] * 0.750062)))
     if cur.get("cloud_cover") is not None:
-        lines.append(f"☁️ Облачность: {cur['cloud_cover']}%")
+        lines.append(_("☁️ Облачность: {c}%", c=cur['cloud_cover']))
     vis = visibility_text(cur.get("visibility"))
     if vis:
         lines.append(vis)
@@ -497,38 +500,37 @@ def format_forecast(name: str, data: dict, days: int = 1) -> str:
         lines.append(uv)
     if d:
         if days <= 1:
-            lines.append(
-                f"\nСегодня: {round(d['temperature_2m_min'][0])}…{round(d['temperature_2m_max'][0])}°C, "
-                f"вероятность осадков {d['precipitation_probability_max'][0] or 0}%"
-            )
+            lines.append("\n" + _("Сегодня: {lo}…{hi}°C, вероятность осадков {p}%",
+                                  lo=round(d['temperature_2m_min'][0]), hi=round(d['temperature_2m_max'][0]),
+                                  p=d['precipitation_probability_max'][0] or 0))
         else:
-            lines.append(f"\n<b>Прогноз на {days} дн.:</b>")
+            lines.append("\n" + _("<b>Прогноз на {n} дн.:</b>", n=days))
             for i, day in enumerate(d["time"][:days]):
                 dt = date.fromisoformat(day)
                 code = d["weather_code"][i]
                 emoji = WMO.get(code, ("", "🌡"))[1]
                 line = (
-                    f"{DAYS_RU[dt.weekday()]} {dt:%d.%m}: {emoji} "
+                    f"{wd(dt.weekday())} {dt:%d.%m}: {emoji} "
                     f"{round(d['temperature_2m_min'][i])}…{round(d['temperature_2m_max'][i])}°C, "
                     f"☔️ {d['precipitation_probability_max'][i] or 0}%"
                 )
                 wind = d.get("wind_speed_10m_max")
                 if wind and wind[i] is not None:
-                    line += f", 💨 {round(wind[i])} м/с"
+                    line += _(", 💨 {w} м/с", w=round(wind[i]))
                 lines.append(line)
     return "\n".join(lines)
 
 
 # Что можно показать в краткой сводке (выбирается в /settings); по умолчанию — как было раньше
 SHORT_FIELDS = {
-    "now": "Погода и температура",
-    "feels": "Ощущается",
-    "wind": "Ветер",
-    "humidity": "Влажность",
-    "pressure": "Давление",
-    "rain": "Осадки на 12 ч",
-    "today": "Сегодня мин…макс",
-    "advice": "Что надеть",
+    "now": N_("Погода и температура"),
+    "feels": N_("Ощущается"),
+    "wind": N_("Ветер"),
+    "humidity": N_("Влажность"),
+    "pressure": N_("Давление"),
+    "rain": N_("Осадки на 12 ч"),
+    "today": N_("Сегодня мин…макс"),
+    "advice": N_("Что надеть"),
 }
 SHORT_DEFAULT = ["now", "feels", "wind", "rain", "today"]
 
@@ -541,15 +543,15 @@ def format_short(name: str, data: dict, fields: list[str] | None = None) -> str:
     feels = cur.get("apparent_temperature") if "feels" in on else None
     if "now" in on:
         now = f"{describe(cur['weather_code'])}, {round(cur['temperature_2m'])}°C"
-        parts.append(now + (f" (ощущается {round(feels)}°)" if feels is not None else ""))
+        parts.append(now + (_(" (ощущается {f}°)", f=round(feels)) if feels is not None else ""))
     elif feels is not None:
-        parts.append(f"ощущается {round(feels)}°")
+        parts.append(_("ощущается {f}°", f=round(feels)))
     if "wind" in on and cur.get("wind_speed_10m") is not None:
-        parts.append(f"💨 {cur['wind_speed_10m']:.0f} м/с")
+        parts.append(_("💨 {w:.0f} м/с", w=cur['wind_speed_10m']))
     if "humidity" in on and cur.get("relative_humidity_2m") is not None:
         parts.append(f"💧 {cur['relative_humidity_2m']}%")
     if "pressure" in on and cur.get("pressure_msl") is not None:
-        parts.append(f"🧭 {round(cur['pressure_msl'] * 0.750062)} мм")
+        parts.append(_("🧭 {p} мм", p=round(cur['pressure_msl'] * 0.750062)))
     lines = [f"📍 <b>{name}</b>" + (": " + ", ".join(parts) if parts else "")]
     if "rain" in on:
         outlook = rain_outlook(data)
@@ -559,7 +561,8 @@ def format_short(name: str, data: dict, fields: list[str] | None = None) -> str:
     tmin, tmax = _first(d, "temperature_2m_min"), _first(d, "temperature_2m_max")
     if "today" in on and tmin is not None and tmax is not None:
         prob = _first(d, "precipitation_probability_max")
-        lines.append(f"Сегодня {round(tmin)}…{round(tmax)}°C" + (f", ☔️ {prob}%" if prob is not None else ""))
+        lines.append(_("Сегодня {lo}…{hi}°C", lo=round(tmin), hi=round(tmax))
+                     + (f", ☔️ {prob}%" if prob is not None else ""))
     if "advice" in on:
         from advice import clothing
 
@@ -575,8 +578,8 @@ def format_hourly(name: str, data: dict, hours: int = 12) -> str:
 
     rows = upcoming(data, hours)
     if not rows:
-        return f"📍 <b>{name}</b>\nНет почасовых данных 🤷"
-    lines = [f"⏱ <b>{name}</b> — по часам", ""]
+        return f"📍 <b>{name}</b>\n" + _("Нет почасовых данных 🤷")
+    lines = [_("⏱ <b>{name}</b> — по часам", name=name), ""]
     for h in rows:
         emoji = WMO.get(h["code"], ("", "🌡"))[1] if h["code"] is not None else "🌡"
         t = h["temp"]
@@ -584,8 +587,9 @@ def format_hourly(name: str, data: dict, hours: int = 12) -> str:
         if h["prob"] is not None:
             line += f", ☔️ {h['prob']}%"
         if (h["prec"] or 0) >= 0.1:
-            line += f" {h['prec']:.1f} мм"
+            line += _(" {mm:.1f} мм", mm=h['prec'])
         if h["wind"] is not None:
-            line += f", 💨 {round(h['wind'])} м/с"
+            line += _(", 💨 {w} м/с", w=round(h['wind']))
+
         lines.append(line)
     return "\n".join(lines)

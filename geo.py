@@ -1,4 +1,5 @@
 """Разбор ответа геокодера Open-Meteo: одноимённые города и выбор между ними."""
+from i18n import N_, _
 from weather import Place
 
 MAX_CHOICES = 8          # столько вариантов показываем кнопками
@@ -12,7 +13,7 @@ def _norm(s: str | None) -> str:
 
 def split_query(query: str) -> tuple[str, str]:
     """«Бахмач, Черниговская» → ("Бахмач", "Черниговская"): уточнение региона или страны."""
-    name, _, hint = (query or "").partition(",")
+    name, _sep, hint = (query or "").partition(",")
     return name.strip(), hint.strip()
 
 
@@ -70,13 +71,14 @@ def candidates(results: list[dict], query: str) -> tuple[list[Place], bool]:
 
 # Тип объекта OpenStreetMap → подпись в скобках (города и сёла подписи не получают)
 OSM_KINDS = {
-    "peak": "вершина", "volcano": "вулкан", "mountain_range": "горы", "ridge": "хребет", "saddle": "перевал",
-    "station": "станция", "halt": "станция", "stop": "остановка", "aerodrome": "аэропорт",
-    "lake": "озеро", "reservoir": "водохранилище", "water": "водоём", "river": "река", "bay": "залив",
-    "beach": "пляж", "island": "остров", "forest": "лес", "wood": "лес", "park": "парк",
-    "nature_reserve": "заповедник", "national_park": "нацпарк", "attraction": "достопримечательность",
-    "museum": "музей", "castle": "замок", "monument": "памятник", "viewpoint": "смотровая площадка",
-    "camp_site": "кемпинг", "alpine_hut": "приют", "ski": "горнолыжный курорт",
+    "peak": N_("вершина"), "volcano": N_("вулкан"), "mountain_range": N_("горы"), "ridge": N_("хребет"),
+    "saddle": N_("перевал"), "station": N_("станция"), "halt": N_("станция"), "stop": N_("остановка"),
+    "aerodrome": N_("аэропорт"), "lake": N_("озеро"), "reservoir": N_("водохранилище"), "water": N_("водоём"),
+    "river": N_("река"), "bay": N_("залив"), "beach": N_("пляж"), "island": N_("остров"), "forest": N_("лес"),
+    "wood": N_("лес"), "park": N_("парк"), "nature_reserve": N_("заповедник"), "national_park": N_("нацпарк"),
+    "attraction": N_("достопримечательность"), "museum": N_("музей"), "castle": N_("замок"),
+    "monument": N_("памятник"), "viewpoint": N_("смотровая площадка"), "camp_site": N_("кемпинг"),
+    "alpine_hut": N_("приют"), "ski": N_("горнолыжный курорт"),
 }
 
 
@@ -97,7 +99,7 @@ def osm_candidates(results: list[dict]) -> tuple[list[Place], bool]:
         name = r.get("name") or (parts[0] if parts else f"{lat:.2f}, {lon:.2f}")
         kind = OSM_KINDS.get(r.get("type")) or OSM_KINDS.get(r.get("category"))
         tail = [p for p in parts[1:] if p != name][-2:]  # область и страна
-        label = ", ".join([f"{name} ({kind})" if kind else name] + tail)
+        label = ", ".join([f"{name} ({_(kind)})" if kind else name] + tail)
         places.append(Place(label, lat, lon))
         if len(places) >= MAX_CHOICES:
             break
@@ -105,7 +107,11 @@ def osm_candidates(results: list[dict]) -> tuple[list[Place], bool]:
 
 
 KIND_WORDS = {"озеро", "оз", "гора", "г", "река", "р", "вокзал", "станция", "ст", "пик", "вершина", "перевал",
-              "водохранилище", "остров", "парк", "замок", "музей", "пляж", "лес"}
+              "водохранилище", "остров", "парк", "замок", "музей", "пляж", "лес",
+              # по-украински и по-английски
+              "річка", "станція", "острів", "водосховище", "ліс", "lake", "mount", "mt", "river", "station",
+              "peak", "pass", "island", "park", "castle", "museum", "beach", "forest", "reservoir"}
+
 
 
 def strip_kind_word(query: str) -> str | None:

@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from i18n import N_, _
+
 STARTED = datetime.now(timezone.utc)
 SLOW_MS = 2000          # дольше — «медленно»
 TICK_STALE = 120        # планировщик считается живым, если «тикал» не позже 2 минут назад
@@ -103,7 +105,7 @@ async def measure(name: str, coro_factory, timeout: float = 5) -> Check:
         detail = await asyncio.wait_for(coro_factory(), timeout)
         return Check(name, True, round((time.perf_counter() - t0) * 1000), detail if isinstance(detail, str) else "")
     except asyncio.TimeoutError:
-        return Check(name, False, round(timeout * 1000), "нет ответа")
+        return Check(name, False, round(timeout * 1000), N_("нет ответа"))
     except Exception as e:  # noqa: BLE001 — показываем пользователю тип ошибки
         return Check(name, False, round((time.perf_counter() - t0) * 1000), str(e)[:60] or type(e).__name__)
 
@@ -148,10 +150,10 @@ def uptime(now: datetime, started: datetime = STARTED) -> str:
     h, rem = divmod(rem, 3600)
     m = rem // 60
     if d:
-        return f"{d} д {h} ч {m} мин"
+        return _("{d} д {h} ч {m} мин", d=d, h=h, m=m)
     if h:
-        return f"{h} ч {m} мин"
-    return f"{m} мин" if m else f"{sec} с"
+        return _("{h} ч {m} мин", h=h, m=m)
+    return _("{m} мин", m=m) if m else _("{s} с", s=sec)
 
 
 def _dot(ok: bool) -> str:
@@ -160,10 +162,10 @@ def _dot(ok: bool) -> str:
 
 def format_check(c: Check) -> str:
     if not c.ok:
-        return f"🔴 {c.name}: ошибка — {c.detail}"
+        return _("🔴 {name}: ошибка — {detail}", name=c.name, detail=_(c.detail))
     extra = f"{c.detail}, " if c.detail else ""
-    slow = " — медленно" if c.ms > SLOW_MS else ""
-    return f"🟢 {c.name}: {extra}{c.ms} мс{slow}"
+    slow = _(" — медленно") if c.ms > SLOW_MS else ""
+    return _("🟢 {name}: {extra}{ms} мс{slow}", name=c.name, extra=extra, ms=c.ms, slow=slow)
 
 
 def format_report(checks: list[Check], now: datetime, *, version: str, subs_total: int,
@@ -172,18 +174,19 @@ def format_report(checks: list[Check], now: datetime, *, version: str, subs_tota
     all_ok = all(c.ok for c in checks) and sched_ok
     kyiv = now.astimezone(ZoneInfo("Europe/Kyiv"))
     lines = [
-        "📡 <b>Связь в порядке</b>" if all_ok else "📡 <b>Есть проблемы со связью</b>",
+        _("📡 <b>Связь в порядке</b>") if all_ok else _("📡 <b>Есть проблемы со связью</b>"),
         "",
-        f"🟢 Сервер бота: работает, аптайм {uptime(now, started)}",
-        f"     время {now:%H:%M:%S} UTC · {kyiv:%H:%M:%S} Киев ({now:%d.%m.%Y})",
+        _("🟢 Сервер бота: работает, аптайм {up}", up=uptime(now, started)),
+        _("     время {now:%H:%M:%S} UTC · {kyiv:%H:%M:%S} Киев ({now:%d.%m.%Y})", now=now, kyiv=kyiv),
         *[format_check(c) for c in checks],
     ]
     if sched_ok:
-        line = f"🟢 Рассылки: работают, активных {subs_total}"
+        line = _("🟢 Рассылки: работают, активных {n}", n=subs_total)
         if next_send:
             nk = next_send.astimezone(ZoneInfo("Europe/Kyiv"))
-            line += f", ближайшая {nk:%d.%m %H:%M} (Киев)"
+            line += _(", ближайшая {t:%d.%m %H:%M} (Киев)", t=nk)
     else:
-        line = f"🔴 Рассылки: планировщик не отвечает (активных {subs_total})"
-    lines += [line, "", f"🏷 Версия бота: {version}"]
+        line = _("🔴 Рассылки: планировщик не отвечает (активных {n})", n=subs_total)
+    lines += [line, "", _("🏷 Версия бота: {v}", v=version)]
+
     return "\n".join(lines)

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from advice import is_wet, upcoming
+from i18n import N_, _
 from weather import Place
 
 CHECK_EVERY = timedelta(minutes=30)
@@ -21,13 +22,13 @@ FROST_C, HEAT_C, COLD_C = -0.5, 30, -20
 GUST_MS, JUMP_C = 15, 8
 
 KINDS = {  # код → подпись кнопки
-    "frost": "❄️ Заморозок",
-    "rain": "☔️ Осадки через 1–2 ч",
-    "storm": "⛈ Гроза",
-    "wind": "💨 Ветер от 15 м/с",
-    "heat": "🔥 Жара от +30°",
-    "cold": "🥶 Мороз от −20°",
-    "jump": "🌡 Перепад от 8°",
+    "frost": N_("❄️ Заморозок"),
+    "rain": N_("☔️ Осадки через 1–2 ч"),
+    "storm": N_("⛈ Гроза"),
+    "wind": N_("💨 Ветер от 15 м/с"),
+    "heat": N_("🔥 Жара от +30°"),
+    "cold": N_("🥶 Мороз от −20°"),
+    "jump": N_("🌡 Перепад от 8°"),
 }
 
 
@@ -50,42 +51,45 @@ def detect(data: dict) -> list[tuple[str, str, str]]:
         t, h = min(night, key=lambda x: x[0])
         if t <= FROST_C:
             found.append(("frost", f"frost:{h['time'][:10]}",
-                          f"❄️ Заморозок: до {_deg(t)}°C около {h['time'][11:16]}"))
+                          _("❄️ Заморозок: до {t}°C около {at}", t=_deg(t), at=h['time'][11:16])))
 
     wet_now = (cur.get("precipitation") or 0) >= 0.1 or is_wet(hours[0])
     soon = next((h for h in hours[1:3] if is_wet(h)), None)
     if soon and not wet_now:
-        prob = f" (вероятность {soon['prob']}%)" if soon["prob"] is not None else ""
+        prob = _(" (вероятность {p}%)", p=soon['prob']) if soon["prob"] is not None else ""
         snow = soon["code"] in {71, 73, 75, 77, 85, 86}
-        found.append(("rain", f"rain:{soon['time'][:13]}",
-                      f"{'🌨 Снег' if snow else '☔️ Дождь'} начнётся около {soon['time'][11:16]}{prob}"))
+        text = (_("🌨 Снег начнётся около {at}{prob}", at=soon['time'][11:16], prob=prob) if snow else
+                _("☔️ Дождь начнётся около {at}{prob}", at=soon['time'][11:16], prob=prob))
+        found.append(("rain", f"rain:{soon['time'][:13]}", text))
 
     storm = next((h for h in hours[:12] if h["code"] in STORM_CODES), None)
     if storm:
-        found.append(("storm", f"storm:{storm['time'][:10]}", f"⛈ Гроза около {storm['time'][11:16]}"))
+        found.append(("storm", f"storm:{storm['time'][:10]}", _("⛈ Гроза около {at}", at=storm['time'][11:16])))
 
     gusts = [h for h in hours[:12] if (h["gust"] or 0) >= GUST_MS]
     if gusts:
         g = max(gusts, key=lambda h: h["gust"])
         found.append(("wind", f"wind:{g['time'][:10]}",
-                      f"💨 Порывы ветра до {round(g['gust'])} м/с около {g['time'][11:16]}"))
+                      _("💨 Порывы ветра до {g} м/с около {at}", g=round(g['gust']), at=g['time'][11:16])))
 
     if temps:
         t, h = max(temps, key=lambda x: x[0])
         if t >= HEAT_C:
-            found.append(("heat", f"heat:{h['time'][:10]}", f"🔥 Жара до {_deg(t)}°C около {h['time'][11:16]}"))
+            found.append(("heat", f"heat:{h['time'][:10]}",
+                          _("🔥 Жара до {t}°C около {at}", t=_deg(t), at=h['time'][11:16])))
         t, h = min(temps, key=lambda x: x[0])
         if t <= COLD_C:
-            found.append(("cold", f"cold:{h['time'][:10]}", f"🥶 Мороз до {_deg(t)}°C около {h['time'][11:16]}"))
+            found.append(("cold", f"cold:{h['time'][:10]}",
+                          _("🥶 Мороз до {t}°C около {at}", t=_deg(t), at=h['time'][11:16])))
 
     d = data.get("daily") or {}
     days, tmax = d.get("time") or [], d.get("temperature_2m_max") or []
     if len(days) >= 2 and len(tmax) >= 2 and None not in tmax[:2]:
         diff = round(tmax[1] - tmax[0])
         if abs(diff) >= JUMP_C:
-            word = "теплее" if diff > 0 else "холоднее"
-            found.append(("jump", f"jump:{days[1]}",
-                          f"🌡 Завтра на {abs(diff)}° {word}: днём до {_deg(tmax[1])}°C"))
+            text = (_("🌡 Завтра на {n}° теплее: днём до {t}°C", n=diff, t=_deg(tmax[1])) if diff > 0 else
+                    _("🌡 Завтра на {n}° холоднее: днём до {t}°C", n=-diff, t=_deg(tmax[1])))
+            found.append(("jump", f"jump:{days[1]}", text))
     return found
 
 
@@ -206,7 +210,8 @@ async def check_all(alerts: Alerts, fetch, send, now: datetime, blocked_exc: tup
                     model_of=lambda uid: None) -> int:
     """Проверить все места. fetch(place) → data, send(user_id, alert, texts) — корутины.
 
-    fetch вызывается от имени владельца места (prefs.current_user), чтобы взять его модель прогноза.
+    Всё для места — запрос, тексты событий и отправка — идёт от имени владельца (prefs.current_user):
+    так берутся его модель прогноза и язык.
     """
     from prefs import current_user
 
@@ -214,13 +219,10 @@ async def check_all(alerts: Alerts, fetch, send, now: datetime, blocked_exc: tup
     cache: dict[tuple, dict] = {}  # одно место и модель у нескольких пользователей — один запрос
     for uid, alert in alerts.all():
         key = (model_of(uid), round(alert["lat"], 2), round(alert["lon"], 2))
+        token = current_user.set(uid)
         try:
             if key not in cache:
-                token = current_user.set(uid)
-                try:
-                    cache[key] = await fetch(Alerts.place(alert))
-                finally:
-                    current_user.reset(token)
+                cache[key] = await fetch(Alerts.place(alert))
             data = cache[key]
             if quiet(data):
                 continue
@@ -233,4 +235,7 @@ async def check_all(alerts: Alerts, fetch, send, now: datetime, blocked_exc: tup
             alerts.remove_all(uid)
         except Exception:
             logging.exception("ошибка проверки предупреждений для %s", uid)
+        finally:
+            current_user.reset(token)
     return sent
+

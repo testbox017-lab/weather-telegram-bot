@@ -4,10 +4,12 @@ from __future__ import annotations
 from datetime import date
 from html import escape
 
-from weather import DAYS_RU, WMO
+from i18n import N_, _, wd
+from weather import WMO
 
 # (название, часы): ночь — после полуночи следующих суток, как её обычно и понимают
-PERIODS = [("утро", range(6, 12)), ("день", range(12, 18)), ("вечер", range(18, 24)), ("ночь", range(24, 30))]
+PERIODS = [(N_("утро"), range(6, 12)), (N_("день"), range(12, 18)), (N_("вечер"), range(18, 24)),
+           (N_("ночь"), range(24, 30))]
 # Что важнее показать за период: гроза > снег > дождь > туман > облака > ясно
 SEVERITY = {95: 9, 96: 9, 99: 9, 75: 8, 86: 8, 73: 7, 85: 7, 71: 6, 77: 6, 65: 6, 82: 6, 67: 6, 57: 6,
             63: 5, 81: 5, 66: 5, 56: 5, 61: 4, 80: 4, 55: 4, 53: 3, 51: 3, 45: 2, 48: 2, 3: 1, 2: 1, 1: 0, 0: 0}
@@ -47,7 +49,7 @@ def format_table(name: str, data: dict, days: int = 3) -> str:
     hourly = data.get("hourly") or {}
     now = (data.get("current") or {}).get("time", "")
     day_list = ((data.get("daily") or {}).get("time") or [])[:days]
-    out = [f"📋 <b>{name}</b> — на {days} дня по периодам", ""]
+    out = [_("📋 <b>{name}</b> — на {n} дня по периодам", name=name, n=days), ""]
     rows = []
     for k, day in enumerate(day_list):
         d = date.fromisoformat(day)
@@ -59,15 +61,16 @@ def format_table(name: str, data: dict, days: int = 3) -> str:
             if not s:
                 continue
             temp = _deg(s["tmin"]) if round(s["tmin"]) == round(s["tmax"]) else f"{_deg(s['tmin'])}…{_deg(s['tmax'])}"
-            prob = f"{s['prob']}%" if s["prob"] is not None else ("дождь" if s["prec"] >= 0.1 else "—")
+            prob = f"{s['prob']}%" if s["prob"] is not None else (_("дождь") if s["prec"] >= 0.1 else "—")
             wind = f"{round(s['wind'])}" if s["wind"] is not None else "—"
             emoji = WMO.get(s["code"], ("", ""))[1] if s["code"] is not None else ""
-            block.append(f"{label:<6}{temp + '°':>8} {prob:>5} {wind:>3} м/с {emoji}")
+            block.append(f"{_(label):<6}{temp + '°':>8} {prob:>5} {wind:>3} {_('м/с')} {emoji}")
         if block:
-            title = "Сегодня" if now[:10] == day else f"{DAYS_RU[d.weekday()]} {d:%d.%m}"
+            title = _("Сегодня") if now[:10] == day else f"{wd(d.weekday())} {d:%d.%m}"
             rows.append(f"{title}\n" + "\n".join(block))
     if not rows:
-        return "\n".join(out + ["Нет почасовых данных 🤷"])
-    header = f"{'':<6}{'°C':>8} {'☔':>5} {'ветер':>7}"
+        return "\n".join(out + [_("Нет почасовых данных 🤷")])
+    header = f"{'':<6}{'°C':>8} {'☔':>5} {_('ветер'):>7}"
+
     out.append("<pre>" + escape(header + "\n" + "\n\n".join(rows)) + "</pre>")
     return "\n".join(out)

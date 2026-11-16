@@ -11,36 +11,40 @@ import logging
 from contextvars import ContextVar
 from pathlib import Path
 
+from i18n import LANGS, N_
+
+# Названия и пояснения переводятся при показе: _(title), _(about)
 MODELS = {  # ключ Open-Meteo → (название, пояснение)
-    "best_match": ("Авто", "Open-Meteo сам выбирает самую точную модель для места."),
-    "ecmwf_ifs025": ("ECMWF", "Европейский центр прогнозов — одна из самых точных моделей в мире."),
-    "icon_seamless": ("ICON · DWD", "Немецкая служба погоды, подробная сетка для Европы."),
-    "gfs_seamless": ("GFS · NOAA", "Американская глобальная модель."),
-    "mean": ("Среднее", "Среднее ECMWF, ICON, GFS (и OpenWeatherMap, если он подключён): "
-                        "ошибки отдельных моделей сглаживаются. Погода словами, восход и УФ — от «Авто»."),
-    "owm": ("OpenWeatherMap", "Независимый сервис со своим пересчётом моделей и наблюдений. Прогноз на 5 дней, "
-                              "дальше, а также восход и УФ — из Open-Meteo."),
+    "best_match": (N_("Авто"), N_("Open-Meteo сам выбирает самую точную модель для места.")),
+    "ecmwf_ifs025": ("ECMWF", N_("Европейский центр прогнозов — одна из самых точных моделей в мире.")),
+    "icon_seamless": ("ICON · DWD", N_("Немецкая служба погоды, подробная сетка для Европы.")),
+    "gfs_seamless": ("GFS · NOAA", N_("Американская глобальная модель.")),
+    "mean": (N_("Среднее"), N_("Среднее ECMWF, ICON, GFS (и OpenWeatherMap, если он подключён): "
+                               "ошибки отдельных моделей сглаживаются. Погода словами, восход и УФ — от «Авто».")),
+    "owm": ("OpenWeatherMap", N_("Независимый сервис со своим пересчётом моделей и наблюдений. Прогноз на 5 дней, "
+                                 "дальше, а также восход и УФ — из Open-Meteo.")),
 }
 AIR_SOURCES = {
-    "openmeteo": ("Open-Meteo · CAMS", "Модель Copernicus для любой точки: индекс EAQI и пыльца."),
-    "waqi": ("WAQI · aqicn.org", "Измерения ближайшей станции в пределах 5 км. Где станции рядом нет — "
-                                 "не будет и значения."),
-    "off": ("Выключено", "Кнопки и команды качества воздуха не будет."),
+    "openmeteo": ("Open-Meteo · CAMS", N_("Модель Copernicus для любой точки: индекс EAQI и пыльца.")),
+    "waqi": ("WAQI · aqicn.org", N_("Измерения ближайшей станции в пределах 5 км. Где станции рядом нет — "
+                                    "не будет и значения.")),
+    "off": (N_("Выключено"), N_("Кнопки и команды качества воздуха не будет.")),
 }
 REVIEW = {
-    "on": ("По воскресеньям", "Вечером в воскресенье — итоги недели для ⭐ Моих мест (до трёх)."),
-    "off": ("Не присылать", "Итоги можно посмотреть в любой момент: /review."),
+    "on": (N_("По воскресеньям"), N_("Вечером в воскресенье — итоги недели для ⭐ Моих мест (до трёх).")),
+    "off": (N_("Не присылать"), N_("Итоги можно посмотреть в любой момент: /review.")),
 }
-DEFAULTS = {"model": "best_match", "air": "openmeteo", "review": "on"}
+LANGUAGES = {code: (name, "") for code, name in LANGS.items()}  # названия языков — каждый на своём языке
+DEFAULTS = {"lang": "ru", "model": "best_match", "air": "openmeteo", "review": "on"}
 # поля краткой сводки (weather.SHORT_FIELDS) — список, хранится отдельно от выбора «одно из»
 SHORT_KEY = "short"
-CHOICES = {"model": MODELS, "air": AIR_SOURCES, "review": REVIEW}
+CHOICES = {"lang": LANGUAGES, "model": MODELS, "air": AIR_SOURCES, "review": REVIEW}
 
 current_user: ContextVar[int | None] = ContextVar("current_user", default=None)
 
 
 class Prefs:
-    """user_id → {"model": ..., "air": ..., "review": ..., "short": [...]}; хранится в JSON-файле, по умолчанию — DEFAULTS."""
+    """user_id → {"lang": ..., "model": ..., "air": ..., "review": ..., "short": [...]}; хранится в JSON-файле, по умолчанию — DEFAULTS."""
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -100,4 +104,7 @@ class Prefs:
 
 
 def model_label(key: str) -> str:
-    return MODELS.get(key, MODELS["best_match"])[0]
+    from i18n import _
+
+    return _(MODELS.get(key, MODELS["best_match"])[0])
+

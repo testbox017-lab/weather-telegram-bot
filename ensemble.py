@@ -142,9 +142,13 @@ def note(data: dict) -> str:
     """Подпись под прогнозом: «Среднее 4 источников (ECMWF, …), сегодня расходятся на 3°»."""
     from prefs import MODELS
 
-    names = [MODELS.get(m, (m,))[0].split(" · ")[0] for m in data.get("members") or MEMBERS]
-    text = f"Среднее {len(names)} источников ({', '.join(names)})"
+    from i18n import _
+
+    names = [_(MODELS.get(m, (m,))[0]).split(" · ")[0] for m in data.get("members") or MEMBERS]
+    text = _("Среднее {n} источников ({names})", n=len(names), names=", ".join(names))
     spread = data.get("spread_today")
     if spread is not None:
-        text += ", сегодня " + ("почти не расходятся" if spread < 1.5 else f"расходятся до {round(spread)}°")
+        text += (_(", сегодня почти не расходятся") if spread < 1.5
+                 else _(", сегодня расходятся до {n}°", n=round(spread)))
+
     return text

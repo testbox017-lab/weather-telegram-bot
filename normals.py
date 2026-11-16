@@ -11,6 +11,8 @@ import logging
 from datetime import date, timedelta
 from pathlib import Path
 
+from i18n import _
+
 FROM_YEAR, TO_YEAR = 1991, 2020
 WINDOW = 3          # ± дней вокруг даты
 WET_MM = 1.0        # день с осадками
@@ -61,16 +63,21 @@ def norm_text(norm: dict | None, day: date, tmax: float | None = None, tmin: flo
     if not row:
         return None
     hi, lo, wet = row
-    text = f"📈 Обычно {day:%d.%m}: днём {_deg(hi)}°, ночью {_deg(lo)}°"
+    text = _("📈 Обычно {d:%d.%m}: днём {hi}°, ночью {lo}°", d=day, hi=_deg(hi), lo=_deg(lo))
     if wet is not None:
-        text += f", осадки в {wet}% лет"
+        text += _(", осадки в {p}% лет", p=wet)
     if tmax is not None and tmin is not None:
         diff = round((tmax + tmin) / 2 - (hi + lo) / 2)
-        if abs(diff) >= 2:
-            word = "теплее" if diff > 0 else "холоднее"
-            text += f" — {'сегодня' if day == date.today() else 'в этот день'} на {abs(diff)}° {word} нормы"
+        today = day == date.today()
+        if diff >= 2:
+            text += (_(" — сегодня на {n}° теплее нормы", n=diff) if today
+                     else _(" — в этот день на {n}° теплее нормы", n=diff))
+        elif diff <= -2:
+            text += (_(" — сегодня на {n}° холоднее нормы", n=-diff) if today
+                     else _(" — в этот день на {n}° холоднее нормы", n=-diff))
         else:
-            text += " — около нормы"
+            text += _(" — около нормы")
+
     return text
 
 

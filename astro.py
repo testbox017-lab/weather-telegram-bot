@@ -6,19 +6,21 @@ from astral import Observer
 from astral.moon import moonrise, moonset, phase
 from astral.sun import dawn, dusk, noon
 
+from i18n import N_, _
+
 SYNODIC = 29.530588853  # синодический месяц, сут.
 
 # (возраст луны до, эмодзи, название)
 PHASES = [
-    (1.0, "🌑", "Новолуние"),
-    (6.4, "🌒", "Растущий серп"),
-    (8.4, "🌓", "Первая четверть"),
-    (13.8, "🌔", "Растущая луна"),
-    (15.8, "🌕", "Полнолуние"),
-    (21.1, "🌖", "Убывающая луна"),
-    (23.1, "🌗", "Последняя четверть"),
-    (28.5, "🌘", "Убывающий серп"),
-    (99.0, "🌑", "Новолуние"),
+    (1.0, "🌑", N_("Новолуние")),
+    (6.4, "🌒", N_("Растущий серп")),
+    (8.4, "🌓", N_("Первая четверть")),
+    (13.8, "🌔", N_("Растущая луна")),
+    (15.8, "🌕", N_("Полнолуние")),
+    (21.1, "🌖", N_("Убывающая луна")),
+    (23.1, "🌗", N_("Последняя четверть")),
+    (28.5, "🌘", N_("Убывающий серп")),
+    (99.0, "🌑", N_("Новолуние")),
 ]
 
 
@@ -45,10 +47,10 @@ def next_phases(day: date, horizon: int = 32) -> list[tuple[str, str, date]]:
         before = d - timedelta(days=1)
         # момент фазы лежит между before и d — берём ближайший к нему день
         if age < prev and "new" not in found:  # возраст «обнулился»
-            found["new"] = ("🌑", "Новолуние", d if age < SYNODIC - prev else before)
+            found["new"] = ("🌑", N_("Новолуние"), d if age < SYNODIC - prev else before)
         if prev < SYNODIC / 2 <= age and "full" not in found:
             half = SYNODIC / 2
-            found["full"] = ("🌕", "Полнолуние", d if age - half < half - prev else before)
+            found["full"] = ("🌕", N_("Полнолуние"), d if age - half < half - prev else before)
         prev = age
     return sorted(found.values(), key=lambda x: x[2])
 
@@ -71,7 +73,8 @@ def twilight_line(obs: Observer, day: date, tz) -> str | None:
         start, mid, end = dawn(obs, day, tzinfo=tz), noon(obs, day, tzinfo=tz), dusk(obs, day, tzinfo=tz)
     except ValueError:
         return None
-    return f"🌄 Светает с {start:%H:%M} · ☀️ Полдень {mid:%H:%M} · 🌆 Темнеет к {end:%H:%M}"
+    return _("🌄 Светает с {start:%H:%M} · ☀️ Полдень {mid:%H:%M} · 🌆 Темнеет к {end:%H:%M}",
+             start=start, mid=mid, end=end)
 
 
 def astro_text(lat: float, lon: float, data: dict, next_phases_line: bool = True) -> str:
@@ -84,10 +87,10 @@ def astro_text(lat: float, lon: float, data: dict, next_phases_line: bool = True
     if d.get("sunrise") and d.get("sunset"):
         rise = datetime.fromisoformat(d["sunrise"][0])
         sset = datetime.fromisoformat(d["sunset"][0])
-        line = f"🌅 Восход {rise:%H:%M} · 🌇 Заход {sset:%H:%M}"
+        line = _("🌅 Восход {rise:%H:%M} · 🌇 Заход {set:%H:%M}", rise=rise, set=sset)
         if d.get("daylight_duration"):
             mins = round(d["daylight_duration"][0] / 60)
-            line += f" (день {mins // 60} ч {mins % 60:02d} мин)"
+            line += _(" (день {h} ч {m:02d} мин)", h=mins // 60, m=mins % 60)
         lines.append(line)
 
     obs = Observer(latitude=lat, longitude=lon)
@@ -97,9 +100,10 @@ def astro_text(lat: float, lon: float, data: dict, next_phases_line: bool = True
     mrise = _moon_event(moonrise, obs, today, tz)
     mset = _moon_event(moonset, obs, today, tz)
     emoji, name, lit = moon_phase(today)
-    lines.append(f"🌙 Луна: восход {_hm(mrise)} · заход {_hm(mset)}")
-    lines.append(f"{emoji} {name}, освещена на {lit}%")
+    lines.append(_("🌙 Луна: восход {rise} · заход {set}", rise=_hm(mrise), set=_hm(mset)))
+    lines.append(_("{emoji} {name}, освещена на {lit}%", emoji=emoji, name=_(name), lit=lit))
     nxt = next_phases(today) if next_phases_line else []
     if nxt:
-        lines.append(" · ".join(f"{e} {n} {d:%d.%m}" for e, n, d in nxt))
+        lines.append(" · ".join(f"{e} {_(n)} {d:%d.%m}" for e, n, d in nxt))
+
     return "\n".join(lines)

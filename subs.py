@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from i18n import _, wd_lower
 from weather import Place
 
 INTERVALS = (1, 3, 6, 12, 24)   # допустимые интервалы, часов
@@ -18,10 +19,26 @@ MAX_TIMES = 3                    # не больше 3 времён в день
 SUB_LIMIT = 5                    # не больше 5 рассылок на пользователя
 QUIET_FROM, QUIET_TO = 23, 7     # рассылки «каждые N ч» ночью не приходят (по местному времени места)
 _TIME_RE = re.compile(r"([01]?\d|2[0-3])[:.]([0-5]\d)")
-_HOURS_RE = re.compile(r"^(?:каждые?\s*)?(\d{1,2})\s*(?:ч|час|часа|часов|h)?$")
+_HOURS_RE = re.compile(r"^(?:каждые?\s*|кожн[іуа]?\s*|every\s*)?(\d{1,2})\s*"
+                       r"(?:ч|час|часа|часов|h|год|години|годин|hrs?|hours?)?$")
 
 
 DAY_NAMES = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+# по-украински и по-английски: «по буднях 07:30», «weekdays 07:30», «sat sun 10:00»
+_DAY_WORDS_UK = {
+    "будні": [0, 1, 2, 3, 4], "буднях": [0, 1, 2, 3, 4], "вихідні": [5, 6], "вихідних": [5, 6],
+    "понеділок": [0], "понеділках": [0], "вівторок": [1], "вівторках": [1], "середа": [2], "середу": [2],
+    "середах": [2], "четвер": [3], "четвергах": [3], "п'ятниця": [4], "п'ятницю": [4], "п'ятницях": [4],
+    "пʼятниця": [4], "пʼятницю": [4], "субота": [5], "суботу": [5], "суботах": [5], "неділя": [6], "неділю": [6],
+    "неділях": [6], "нд": [6],
+}
+_DAY_WORDS_EN = {
+    "weekdays": [0, 1, 2, 3, 4], "weekday": [0, 1, 2, 3, 4], "weekends": [5, 6], "weekend": [5, 6],
+    **{w: [i] for i, names in enumerate([("mon", "monday", "mondays"), ("tue", "tuesday", "tuesdays"),
+                                          ("wed", "wednesday", "wednesdays"), ("thu", "thursday", "thursdays"),
+                                          ("fri", "friday", "fridays"), ("sat", "saturday", "saturdays"),
+                                          ("sun", "sunday", "sundays")]) for w in names},
+}
 _DAY_WORDS = {
     "будни": [0, 1, 2, 3, 4], "будням": [0, 1, 2, 3, 4], "будние": [0, 1, 2, 3, 4],
     "выходные": [5, 6], "выходным": [5, 6],
@@ -30,8 +47,10 @@ _DAY_WORDS = {
     "пятница": [4], "пятницу": [4], "пятницам": [4], "суббота": [5], "субботу": [5], "субботам": [5],
     "воскресенье": [6], "воскресеньям": [6],
     **{d: [i] for i, d in enumerate(DAY_NAMES)},
+    **_DAY_WORDS_UK,
+    **_DAY_WORDS_EN,
 }
-_FILLER = {"по", "в", "во", "и", "дни", "день"}
+_FILLER = {"по", "в", "во", "и", "дни", "день", "у", "і", "та", "дні", "on", "and", "every", "at", "о"}
 
 
 def _take_days(t: str) -> tuple[str, list[int] | None]:
@@ -67,15 +86,15 @@ def parse_schedule(text: str | None) -> dict | None:
     if m:
         h = int(m.group(1))
         return {"hours": h} if h in INTERVALS else None
-    rest = re.sub(r"\bв\b", " ", t)
+    rest = re.sub(r"\b(?:в|у|о|at)\b", " ", t)
     times = [f"{int(h):02d}:{mi}" for h, mi in _TIME_RE.findall(rest)]
-    leftover = _TIME_RE.sub("", rest).replace(",", " ").replace(";", " ").replace("и", " ").strip()
+    leftover = re.sub(r"\b(?:и|і|та|and)\b", " ", _TIME_RE.sub("", rest).replace(",", " ").replace(";", " ")).strip()
     if not times or leftover or len(times) > MAX_TIMES:
         return None
     return {"times": sorted(set(times))}
 
 
-SHORT_WORDS = {"кратко", "коротко", "кратко.", "short"}
+SHORT_WORDS = {"кратко", "коротко", "кратко.", "short", "стисло", "brief"}
 
 
 def split_short(args: str | None) -> tuple[str, bool]:
@@ -85,24 +104,27 @@ def split_short(args: str | None) -> tuple[str, bool]:
     return " ".join(rest), len(rest) != len(tokens)
 
 
-_COND_RE = re.compile(r"(?:^|\s)если\s+(.+)$")
+_COND_RE = re.compile(r"(?:^|\s)(?:если|якщо|if)\s+(.+)$")
 _NUM_RE = re.compile(r"([-−+]?\d{1,2})")
 
 
 def parse_condition(text: str) -> str | None:
     """«дождь» → "precip", «снег» → "snow", «мороз» → "frost", «ниже -5» → "below:-5", «выше 25» → "above:25"."""
-    t = text.strip().lower().replace("°", " ").replace("c", " ").replace("с ", " ")
+    t = re.sub(r"°\s*[cс]?|(?<=\d)\s*[cс](?![a-zа-яіїєґ])", " ", text.strip().lower())  # «-5°C», «25 с»
     m = _NUM_RE.search(t)
     num = int(m.group(1).replace("−", "-")) if m else None
-    if num is not None and any(w in t for w in ("ниже", "холоднее", "меньше", "<")):
+    if num is not None and any(w in t for w in ("ниже", "холоднее", "меньше", "<", "нижче", "холодніше", "менше",
+                                                "below", "under", "colder", "less")):
         return f"below:{num}"
-    if num is not None and any(w in t for w in ("выше", "теплее", "больше", ">", "жара")):
+    if num is not None and any(w in t for w in ("выше", "теплее", "больше", ">", "жара", "вище", "тепліше",
+                                                "більше", "спека", "above", "over", "warmer", "more")):
         return f"above:{num}"
-    if "снег" in t:
+    if any(w in t for w in ("снег", "сніг", "snow")):
         return "snow"
-    if any(w in t for w in ("дожд", "осадк", "ливен", "гроз")):
+    if any(w in t for w in ("дожд", "осадк", "ливен", "гроз", "дощ", "опад", "злив", "rain", "shower", "storm",
+                            "precip", "thunder")):
         return "precip"
-    if any(w in t for w in ("мороз", "заморо", "минус")):
+    if any(w in t for w in ("мороз", "заморо", "минус", "мінус", "frost", "freez")):
         return "frost"
     return None
 
@@ -119,12 +141,13 @@ def split_condition(args: str | None) -> tuple[str, str | None, bool]:
 def describe_cond(cond: str | None) -> str:
     if not cond:
         return ""
-    kind, _, value = cond.partition(":")
+    kind, _sep, value = cond.partition(":")
     if kind in ("below", "above"):
         n = int(value)
-        sign = "+" if n > 0 else ""
-        return f"если {'ниже' if kind == 'below' else 'выше'} {sign}{n}°"
-    return {"precip": "если будут осадки", "snow": "если будет снег", "frost": "если будет мороз"}.get(kind, "")
+        t = f"{'+' if n > 0 else ''}{n}"
+        return _("если ниже {t}°", t=t) if kind == "below" else _("если выше {t}°", t=t)
+    return {"precip": _("если будут осадки"), "snow": _("если будет снег"),
+            "frost": _("если будет мороз")}.get(kind, "")
 
 
 def condition_met(cond: str | None, data: dict) -> bool:
@@ -133,7 +156,7 @@ def condition_met(cond: str | None, data: dict) -> bool:
         return True
     from advice import is_wet, upcoming
 
-    kind, _, value = cond.partition(":")
+    kind, _sep, value = cond.partition(":")
     hours = upcoming(data, 24 if kind == "frost" else 12)
     temps = [h["temp"] for h in hours if h["temp"] is not None]
     if kind == "precip":
@@ -196,19 +219,20 @@ def quiet_now(sub: dict, now: datetime) -> bool:
 
 def describe_days(days: list[int] | None) -> str:
     if not days or len(days) == 7:
-        return "ежедневно"
+        return _("ежедневно")
     if days == [0, 1, 2, 3, 4]:
-        return "по будням"
+        return _("по будням")
     if days == [5, 6]:
-        return "по выходным"
-    return "по " + ", ".join(DAY_NAMES[d] for d in days)
+        return _("по выходным")
+    return _("по {days}", days=", ".join(wd_lower(d) for d in days))
 
 
 def describe(sched: dict) -> str:
     if "times" in sched:
-        return describe_days(sched.get("days")) + " в " + ", ".join(sched["times"])
+        return _("{days} в {times}", days=describe_days(sched.get("days")), times=", ".join(sched["times"]))
     h = int(sched["hours"])
-    return {1: "каждый час", 24: "раз в сутки"}.get(h, f"каждые {h} ч")
+    return {1: _("каждый час"), 24: _("раз в сутки")}.get(h) or _("каждые {h} ч", h=h)
+
 
 
 def local_time(dt: datetime, tz: str) -> str:

@@ -13,14 +13,16 @@ from pathlib import Path
 from aiogram import BaseMiddleware, Bot, F
 from aiogram.dispatcher.flags import get_flag
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import (BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto,
+from aiogram.types import (BotCommand, BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
 
 import ensemble
+import i18n
 from alerts import ALERT_LIMIT, Alerts
 from astro import astro_text
 from charts import daily_chart, hourly_chart, wind_humidity_chart
 from dates import build_cal_cb
+from i18n import N_, _, variants
 from normals import Normals, norm_text
 from places import FAV_LIMIT, Favorites, LastPlaces, build_cb, coords_name, parse_coords
 from prefs import Prefs, current_user, model_label
@@ -52,44 +54,55 @@ alerts = Alerts(DATA_DIR / "alerts.json")
 normals = Normals(DATA_DIR / "normals.json")
 prefs = Prefs(DATA_DIR / "prefs.json")
 forecast_log = ForecastLog(DATA_DIR / "forecast_log.json")
+i18n.lang_hook = lambda: prefs.current()["lang"]  # язык ответов — из настроек текущего пользователя
 PlaceAction = Callable[[Message, Place], Awaitable[None]]
 choices: dict[int, tuple[int, list[Place], PlaceAction]] = {}  # выбор среди одноимённых городов
 choice_ids = itertools.count(1)
 
-BTN_GEO = "📍 Моя геолокация"
-BTN_NOW = "🌤 Погода сейчас"
-BTN_WEEK = "📅 Прогноз на неделю"
-BTN_HELP = "❓ Помощь"
-BTN_PLACES = "⭐ Мои места"
-BTN_DATE = "📆 Выбрать дату"
-BTN_SUBS = "🔔 Рассылка"
-BTN_PING = "📡 Связь"
-BTN_ALERTS = "⚠️ Предупреждения"
-BTN_SETTINGS = "⚙️ Настройки"
-NO_PLACE = "Напишите название города или нажмите «📍 Моя геолокация»"
-ASK_PLACE = ("Отправьте название города, координаты (например <code>51.18, 32.83</code>) "
-             "или геолокацию — добавлю в «Мои места»")
+BTN_GEO = N_("📍 Моя геолокация")  # подписи переводятся при показе: _(BTN_GEO); нажатия узнаются на любом языке
+BTN_NOW = N_("🌤 Погода сейчас")
+BTN_WEEK = N_("📅 Прогноз на неделю")
+BTN_HELP = N_("❓ Помощь")
+BTN_PLACES = N_("⭐ Мои места")
+BTN_DATE = N_("📆 Выбрать дату")
+BTN_SUBS = N_("🔔 Рассылка")
+BTN_PING = N_("📡 Связь")
+BTN_ALERTS = N_("⚠️ Предупреждения")
+BTN_SETTINGS = N_("⚙️ Настройки")
+NO_PLACE = N_("Напишите название города или нажмите «📍 Моя геолокация»")
+ASK_PLACE = N_("Отправьте название города, координаты (например <code>51.18, 32.83</code>) "
+               "или геолокацию — добавлю в «Мои места»")
 
-keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text=BTN_GEO, request_location=True), KeyboardButton(text=BTN_NOW)],
-        [KeyboardButton(text=BTN_WEEK), KeyboardButton(text=BTN_DATE)],
-        [KeyboardButton(text=BTN_PLACES), KeyboardButton(text=BTN_SUBS), KeyboardButton(text=BTN_ALERTS)],
-        [KeyboardButton(text=BTN_SETTINGS), KeyboardButton(text=BTN_PING), KeyboardButton(text=BTN_HELP)],
-    ],
-    resize_keyboard=True,
-    is_persistent=True,
-)
 
-HELP = (
+def menu(button: str):
+    """Фильтр aiogram: нажата кнопка меню button на любом из языков."""
+    return F.text.in_(variants(button))
+
+
+def keyboard() -> ReplyKeyboardMarkup:
+    """Кнопки меню на языке текущего пользователя."""
+    b = KeyboardButton
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [b(text=_(BTN_GEO), request_location=True), b(text=_(BTN_NOW))],
+            [b(text=_(BTN_WEEK)), b(text=_(BTN_DATE))],
+            [b(text=_(BTN_PLACES)), b(text=_(BTN_SUBS)), b(text=_(BTN_ALERTS))],
+            [b(text=_(BTN_SETTINGS)), b(text=_(BTN_PING)), b(text=_(BTN_HELP))],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+HELP = N_(
     "Я показываю погоду 🌦\n\n"
     "• Просто напишите название города, например <i>Москва</i>, пришлю погоду, "
     "графики на сутки (температура, осадки, ветер, влажность), восход и заход солнца и луны, фазу луны\n"
     "• /week <i>город</i> то же на 7 дней\n"
     "• Или отправьте геолокацию кнопкой ниже\n\n"
     "Кнопки внизу:\n"
-    f"• {BTN_GEO} — погода там, где вы сейчас\n"
-    f"• {BTN_NOW} и {BTN_WEEK} — для последнего города или места\n"
+    "• {geo} — погода там, где вы сейчас\n"
+    "• {now} и {week} — для последнего города или места\n"
     "• Под прогнозом: 🔄 Обновить (перерисует тот же прогноз), переключение сегодня/неделя и ⏱ По часам — "
     "12 часов текстом\n"
     "• В сводке есть совет, что надеть 👕\n"
@@ -97,15 +110,15 @@ HELP = (
     "• Координаты текстом, например <code>51.18, 32.83</code>, — погода в этой точке\n"
     "• Если городов с таким названием несколько, предложу выбрать кнопками. Можно сразу уточнить "
     "через запятую: <i>Бахмач, Черниговская</i> или <i>Париж, США</i>\n\n"
-    f"{BTN_PLACES} — ваш список мест (до {FAV_LIMIT}):\n"
+    "{places} — ваш список мест (до {fav_limit}):\n"
     "• /add <i>город</i> или /add <i>широта долгота [название]</i> — добавить\n"
     "• /places — список, нажмите место, чтобы узнать погоду\n"
     "• /del <i>номер или название</i> — удалить\n"
     "• ⭐ В мои места — кнопка под прогнозом\n\n"
-    f"{BTN_DATE} — погода на любую дату (прогноз до 16 дней вперёд, архив с 1940 года):\n"
+    "{date} — погода на любую дату (прогноз до 16 дней вперёд, архив с 1940 года):\n"
     "• /date <i>21.11</i> или <i>21.11.2026</i>, <i>завтра</i>, <i>вчера</i> [город или координаты]\n"
     "• 📆 Другая дата — кнопка под прогнозом\n\n"
-    f"{BTN_SUBS} — бот сам присылает погоду (до {SUB_LIMIT} рассылок):\n"
+    "{subs} — бот сам присылает погоду (до {sub_limit} рассылок):\n"
     "• /subscribe [город] — выбрать периодичность: каждый 1/3/6/12 ч, раз в сутки или в своё время\n"
     "• /subscribe <i>Бахмач 3ч</i> или <i>Бахмач 08:00, 20:00</i> — сразу\n"
     "• добавьте <i>кратко</i> — три строки без графиков (переключается и в /subs)\n"
@@ -114,9 +127,9 @@ HELP = (
     "без осадков рассылка в этот день не придёт\n"
     "• /subs — ваши рассылки, /unsubscribe <i>номер</i> или <i>all</i> — отключить\n"
     "• 🔔 Подписаться — кнопка под прогнозом\n\n"
-    f"{BTN_ALERTS} или /alerts — бот сам напишет, если ожидается заморозок, гроза, порывы ветра от 15 м/с, "
+    "{alerts} или /alerts — бот сам напишет, если ожидается заморозок, гроза, порывы ветра от 15 м/с, "
     "жара, сильный мороз, резкий перепад температуры или осадки через 1–2 часа (ночью с 23 до 7 молчит). "
-    f"До {ALERT_LIMIT} мест, каждое предупреждение включается отдельно\n\n"
+    "До {alert_limit} мест, каждое предупреждение включается отдельно\n\n"
     "Ещё:\n"
     "• /air [город] или 🌫 Воздух под прогнозом — качество воздуха (индекс EAQI, PM2.5, PM10) и пыльца\n"
     "• /weekend [город] или 🏖 Выходные — прогноз на ближайшие субботу и воскресенье с советом\n"
@@ -131,10 +144,48 @@ HELP = (
     "на завтра. По воскресеньям в 20:00 бот присылает итоги сам (отключается в настройках)\n"
     "• В сводке на сегодня и на дату есть строка 📈 «как обычно в этот день» — норма за 1991–2020\n\n"
     "Кроме городов можно искать горы, станции, озёра и достопримечательности: «Говерла», «озеро Свитязь»\n\n"
-    f"{BTN_SETTINGS} или /settings — модель прогноза (Авто, ECMWF, ICON, GFS), источник качества воздуха "
+    "{settings} или /settings — язык (русский, українська, English), модель прогноза (Авто, ECMWF, ICON, GFS), "
+    "источник качества воздуха "
     "(Open-Meteo, станции WAQI или выключено), что показывать в краткой сводке рассылок и итоги недели\n\n"
-    f"{BTN_PING} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
+    "{ping} или /ping — проверить связь: сервер бота, Telegram, Open-Meteo, рассылки"
 )
+
+
+def help_text() -> str:
+    return _(HELP, geo=_(BTN_GEO), now=_(BTN_NOW), week=_(BTN_WEEK), places=_(BTN_PLACES), fav_limit=FAV_LIMIT,
+             date=_(BTN_DATE), subs=_(BTN_SUBS), sub_limit=SUB_LIMIT, alerts=_(BTN_ALERTS), alert_limit=ALERT_LIMIT,
+             settings=_(BTN_SETTINGS), ping=_(BTN_PING))
+
+
+COMMANDS = [
+    ("start", N_("Начать и показать кнопки")),
+    ("weather", N_("Погода сейчас: /weather Город")),
+    ("week", N_("Прогноз на неделю: /week Город")),
+    ("date", N_("Погода на дату: /date 21.11 Город")),
+    ("places", N_("Мои места")),
+    ("add", N_("Добавить место: /add Город или /add 51.18 32.83")),
+    ("del", N_("Удалить место: /del номер или название")),
+    ("subscribe", N_("Рассылка погоды: /subscribe Город 3ч")),
+    ("subs", N_("Мои рассылки")),
+    ("unsubscribe", N_("Отключить рассылку: /unsubscribe номер|all")),
+    ("alerts", N_("Предупреждения: заморозок, гроза, ветер")),
+    ("air", N_("Качество воздуха и пыльца: /air Город")),
+    ("weekend", N_("Погода на выходные: /weekend Город")),
+    ("table", N_("3 дня таблицей: /table Город")),
+    ("compare", N_("Сравнить мои места")),
+    ("radar", N_("Радар осадков: /radar Город")),
+    ("models", N_("ECMWF, ICON и GFS на одном графике")),
+    ("review", N_("Итоги недели и точность прогноза")),
+    ("settings", N_("Язык, источник погоды и качества воздуха")),
+    ("language", N_("Язык: русский, українська, English")),
+    ("ping", N_("Проверить связь с сервером")),
+    ("help", N_("Справка")),
+]
+
+
+def bot_commands() -> list[BotCommand]:
+    """Команды для меню «/» Telegram на языке текущего пользователя."""
+    return [BotCommand(command=c, description=_(d)) for c, d in COMMANDS]
 
 
 # ---------- Ожидание ввода (FSM) ----------
@@ -146,8 +197,8 @@ class Input(StatesGroup):
     sub_time = State()  # время рассылки для места из данных состояния
 
 
-MENU_BUTTONS = (BTN_GEO, BTN_NOW, BTN_WEEK, BTN_HELP, BTN_PLACES, BTN_DATE, BTN_SUBS, BTN_PING, BTN_ALERTS,
-                BTN_SETTINGS)
+MENU_BUTTONS = tuple(v for b in (BTN_GEO, BTN_NOW, BTN_WEEK, BTN_HELP, BTN_PLACES, BTN_DATE, BTN_SUBS, BTN_PING,
+                                 BTN_ALERTS, BTN_SETTINGS) for v in sorted(variants(b)))  # на всех языках
 # Текст, который считается ответом на вопрос бота: не команда и не кнопка меню
 INPUT_TEXT = F.text & ~F.text.startswith("/") & ~F.text.in_(MENU_BUTTONS)
 KEEP_INPUT = {"keep_input": True}  # флаг обработчиков ввода: состояние они ведут сами
@@ -155,7 +206,7 @@ KEEP_INPUT = {"keep_input": True}  # флаг обработчиков ввод�
 
 class CurrentUserMiddleware(BaseMiddleware):
     """Запоминает, чьё сообщение или кнопка обрабатывается (prefs.current_user): по нему клиент
-    Open-Meteo берёт модель прогноза, а кнопки — источник качества воздуха."""
+    Open-Meteo берёт модель прогноза, кнопки — источник качества воздуха, а все тексты — язык."""
 
     async def __call__(self, handler, event, data):
         user = data.get("event_from_user")
@@ -182,7 +233,7 @@ class ResetInputMiddleware(BaseMiddleware):
 async def send_prompt(m: Message, state, text: str) -> None:
     """Вопрос с кнопкой «✖️ Отмена»; прежний вопрос теряет свою кнопку, чтобы в чате не висели старые «Отмена»."""
     await drop_prompt(m.bot, m.chat.id, state)
-    sent = await m.answer(text, reply_markup=cancel_markup())
+    sent = await m.answer(text, reply_markup=cancel_markup())  # text уже переведён
     await state.update_data(prompt=sent.message_id)
 
 
@@ -223,33 +274,35 @@ def place_name(user_id: int, lat: float, lon: float) -> str:
 
 
 def forecast_markup(days: int, place: Place) -> InlineKeyboardMarkup:
-    other = (7, "📅 Неделя") if days == 1 else (1, "🌤 Сегодня")
+    other = (7, _("📅 Неделя")) if days == 1 else (1, _("🌤 Сегодня"))
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Обновить", callback_data="r" + build_cb(days, place.lat, place.lon)[1:]),
+        [InlineKeyboardButton(text=_("🔄 Обновить"), callback_data="r" + build_cb(days, place.lat, place.lon)[1:]),
          InlineKeyboardButton(text=other[1], callback_data=build_cb(other[0], place.lat, place.lon))],
-        [InlineKeyboardButton(text="⭐ В мои места", callback_data=f"fa:{place.lat:.3f}:{place.lon:.3f}"),
-         InlineKeyboardButton(text="📆 Другая дата", callback_data=build_cal_cb("f", place.lat, place.lon))],
-        [InlineKeyboardButton(text="⏱ По часам", callback_data=f"hr:{place.lat:.3f}:{place.lon:.3f}"),
-         InlineKeyboardButton(text="🔔 Подписаться", callback_data=f"sb:{place.lat:.3f}:{place.lon:.3f}")],
-        [InlineKeyboardButton(text="🌫 Воздух", callback_data=f"aq:{place.lat:.3f}:{place.lon:.3f}"),
-         InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")]
+        [InlineKeyboardButton(text=_("⭐ В мои места"), callback_data=f"fa:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text=_("📆 Другая дата"), callback_data=build_cal_cb("f", place.lat, place.lon))],
+        [InlineKeyboardButton(text=_("⏱ По часам"), callback_data=f"hr:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text=_("🔔 Подписаться"), callback_data=f"sb:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text=_("🌫 Воздух"), callback_data=f"aq:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text=_("🏖 Выходные"), callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")]
         if prefs.current()["air"] != "off" else  # качество воздуха выключено в /settings
-        [InlineKeyboardButton(text="🏖 Выходные", callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")],
-        [InlineKeyboardButton(text="📋 Таблица", callback_data=f"tb:{place.lat:.3f}:{place.lon:.3f}"),
-         InlineKeyboardButton(text="⚠️ Предупреждения", callback_data=f"al:new:{place.lat:.3f}:{place.lon:.3f}")],
-        [InlineKeyboardButton(text="🛰 Радар", callback_data=f"rd:{place.lat:.3f}:{place.lon:.3f}"),
-         InlineKeyboardButton(text="🧪 Модели", callback_data=f"md:{place.lat:.3f}:{place.lon:.3f}")],
-        [InlineKeyboardButton(text="📈 Итоги недели", callback_data=f"rv:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text=_("🏖 Выходные"), callback_data=f"we:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text=_("📋 Таблица"), callback_data=f"tb:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text=_("⚠️ Предупреждения"),
+                              callback_data=f"al:new:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text=_("🛰 Радар"), callback_data=f"rd:{place.lat:.3f}:{place.lon:.3f}"),
+         InlineKeyboardButton(text=_("🧪 Модели"), callback_data=f"md:{place.lat:.3f}:{place.lon:.3f}")],
+        [InlineKeyboardButton(text=_("📈 Итоги недели"), callback_data=f"rv:{place.lat:.3f}:{place.lon:.3f}")],
     ])
 
 
 
 def cancel_markup() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✖️ Отмена", callback_data="x")]])
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=_("✖️ Отмена"), callback_data="x")]])
 
 
 def open_places_markup() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⭐ Мои места", callback_data="pl:list")]])
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=_("⭐ Мои места"),
+                                                                       callback_data="pl:list")]])
 
 
 
@@ -323,17 +376,17 @@ async def build_weather(place: Place, days: int, header: str = "", data: dict | 
     if data.get("source") == "mean":
         text += f"\n<i>{ensemble.note(data)}</i>"
     elif data.get("source") == "mean_failed":
-        text += "\n<i>Модели для среднего сейчас не ответили — показан прогноз «Авто»</i>"
+        text += "\n" + _("<i>Модели для среднего сейчас не ответили — показан прогноз «Авто»</i>")
     elif data.get("source") == "owm":
-        text += "\n<i>Источник: OpenWeatherMap (дальше 5 дней — Open-Meteo)</i>"
+        text += "\n" + _("<i>Источник: OpenWeatherMap (дальше 5 дней — Open-Meteo)</i>")
     elif data.get("source") == "owm_failed":
-        text += "\n<i>OpenWeatherMap сейчас не ответил — показан прогноз Open-Meteo</i>"
+        text += "\n" + _("<i>OpenWeatherMap сейчас не ответил — показан прогноз Open-Meteo</i>")
     elif model == "owm":
-        text += "\n<i>Прогноз Open-Meteo: OpenWeatherMap не даёт прогноза на отдельные даты</i>"
+        text += "\n" + _("<i>Прогноз Open-Meteo: OpenWeatherMap не даёт прогноза на отдельные даты</i>")
     elif model == "mean":
-        text += "\n<i>Прогноз на дату — «Авто» Open-Meteo</i>"
+        text += "\n" + _("<i>Прогноз на дату — «Авто» Open-Meteo</i>")
     elif model != "best_match":
-        text += f"\n<i>Модель прогноза: {model_label(model)}</i>"
+        text += "\n" + _("<i>Модель прогноза: {m}</i>", m=model_label(model))
     if days == 1:
         line = await norm_line(place, date.fromisoformat(data["daily"]["time"][0]) if data.get("daily") else None,
                                data.get("daily") or {})
@@ -348,14 +401,15 @@ async def build_weather(place: Place, days: int, header: str = "", data: dict | 
     except Exception:
         logging.exception("chart error")
         pngs = None
-    period = "на сегодня" if days == 1 else "на 7 дней"
-    return data, text, pngs, f"📍 {escape(place.name)} — прогноз {period}"
+    short = (_("📍 {name} — прогноз на сегодня", name=escape(place.name)) if days == 1
+             else _("📍 {name} — прогноз на 7 дней", name=escape(place.name)))
+    return data, text, pngs, short
 
 
 async def send_weather(m, place: Place, days: int, user_id: int | None = None, header: str = "",
                        data: dict | None = None):
     """Текст прогноза (+ солнце и луна), альбом из двух графиков и inline-кнопки."""
-    _, text, pngs, short = await build_weather(place, days, header, data)
+    _data, text, pngs, short = await build_weather(place, days, header, data)
     if user_id is not None:
         last_places.set(user_id, place)
     await send_album(m, text, pngs, forecast_markup(days, place), short)
@@ -367,7 +421,7 @@ async def refresh_weather(msg: Message, place: Place, days: int, user_id: int) -
     data, text, pngs, short = await build_weather(place, days)
     last_places.set(user_id, place)
     stamp = (data.get("current") or {}).get("time", "")[11:16]
-    stamp = f"\n<i>обновлено в {stamp} по местному времени</i>" if stamp else ""
+    stamp = "\n" + _("<i>обновлено в {t} по местному времени</i>", t=stamp) if stamp else ""
     markup = forecast_markup(days, place)
     if not pngs and not ids:  # прогноз без картинок: всё в одном сообщении
         await msg.edit_text(text + stamp, reply_markup=markup)
@@ -386,13 +440,13 @@ async def reply_for_place(m: Message, place: Place, days: int, user_id: int):
         await send_weather(m, place, days, user_id)
     except Exception:
         logging.exception("weather error")
-        await m.answer("Не удалось получить погоду, попробуйте чуть позже 🙏")
+        await m.answer(_("Не удалось получить погоду, попробуйте чуть позже 🙏"))
 
 
 async def reply_for_last(m: Message, days: int):
     place = last_places.get(m.from_user.id)
     if not place:
-        await m.answer(NO_PLACE, reply_markup=keyboard)
+        await m.answer(_(NO_PLACE), reply_markup=keyboard())
         return
     await reply_for_place(m, place, days, m.from_user.id)
 
@@ -400,7 +454,7 @@ async def reply_for_last(m: Message, days: int):
 def choice_markup(choice_id: int, places: list[Place]) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=f"📍 {p.name}"[:64], callback_data=f"pk:{choice_id}:{i}")]
             for i, p in enumerate(places)]
-    rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="x")])
+    rows.append([InlineKeyboardButton(text=_("✖️ Отмена"), callback_data="x")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -420,17 +474,18 @@ async def with_place(m: Message, user_id: int, query: str, action: PlaceAction) 
         places, obvious = await client.find_cities(query)
     except Exception:
         logging.exception("geocoding error")
-        await m.answer("Не удалось найти место, попробуйте чуть позже 🙏")
+        await m.answer(_("Не удалось найти место, попробуйте чуть позже 🙏"))
         return False
     if not places:
-        await m.answer(f"Не нашёл «{escape(query)}» ни среди городов, ни на карте OpenStreetMap 🤷 Проверьте написание.")
+        await m.answer(_("Не нашёл «{q}» ни среди городов, ни на карте OpenStreetMap 🤷 Проверьте написание.",
+                         q=escape(query)))
         return False
     if obvious:
         await action(m, places[0])
         return True
     choice_id = next(choice_ids)
     choices[user_id] = (choice_id, places, action)
-    await m.answer(f"🔎 Нашёл несколько мест «{escape(query)}». Какое нужно?",
+    await m.answer(_("🔎 Нашёл несколько мест «{q}». Какое нужно?", q=escape(query)),
                    reply_markup=choice_markup(choice_id, places))
     return True
 
@@ -462,15 +517,16 @@ async def for_city(m: Message, query: str, action: PlaceAction):
         return
     place = last_places.get(m.from_user.id)
     if not place:
-        await m.answer(NO_PLACE, reply_markup=keyboard)
+        await m.answer(_(NO_PLACE), reply_markup=keyboard())
         return
     await action(m, place)
 
 
 def back_markup(place: Place) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🌤 Сейчас", callback_data=build_cb(1, place.lat, place.lon)),
-        InlineKeyboardButton(text="📅 Неделя", callback_data=build_cb(7, place.lat, place.lon))]])
+        InlineKeyboardButton(text=_("🌤 Сейчас"), callback_data=build_cb(1, place.lat, place.lon)),
+        InlineKeyboardButton(text=_("📅 Неделя"), callback_data=build_cb(7, place.lat, place.lon))]])
+
 
 
 

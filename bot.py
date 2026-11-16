@@ -43,29 +43,8 @@ async def main():
     bot = Bot(token, default=DefaultBotProperties(parse_mode="HTML"))
     dp = build_dispatcher()
     try:
-        await bot.set_my_commands([
-            BotCommand(command="start", description="Начать и показать кнопки"),
-            BotCommand(command="weather", description="Погода сейчас: /weather Город"),
-            BotCommand(command="week", description="Прогноз на неделю: /week Город"),
-            BotCommand(command="date", description="Погода на дату: /date 21.11 Город"),
-            BotCommand(command="places", description="Мои места"),
-            BotCommand(command="add", description="Добавить место: /add Город или /add 51.18 32.83"),
-            BotCommand(command="del", description="Удалить место: /del номер или название"),
-            BotCommand(command="subscribe", description="Рассылка погоды: /subscribe Город 3ч"),
-            BotCommand(command="subs", description="Мои рассылки"),
-            BotCommand(command="unsubscribe", description="Отключить рассылку: /unsubscribe номер|all"),
-            BotCommand(command="alerts", description="Предупреждения: заморозок, гроза, ветер"),
-            BotCommand(command="air", description="Качество воздуха и пыльца: /air Город"),
-            BotCommand(command="weekend", description="Погода на выходные: /weekend Город"),
-            BotCommand(command="table", description="3 дня таблицей: /table Город"),
-            BotCommand(command="compare", description="Сравнить мои места"),
-            BotCommand(command="radar", description="Радар осадков: /radar Город"),
-            BotCommand(command="models", description="ECMWF, ICON и GFS на одном графике"),
-            BotCommand(command="review", description="Итоги недели и точность прогноза"),
-            BotCommand(command="settings", description="Источник погоды и качества воздуха"),
-            BotCommand(command="ping", description="Проверить связь с сервером"),
-            BotCommand(command="help", description="Справка"),
-        ])
+        await bot.set_my_commands(core.bot_commands())  # по-русски; другой язык из /settings ставит свои
+        # подписи для своего чата (handlers.settings.on_language_changed) — их Telegram помнит сам
     except Exception:
         logging.exception("set_my_commands error")
     async with aiohttp.ClientSession() as session:

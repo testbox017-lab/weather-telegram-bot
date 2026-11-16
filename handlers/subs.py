@@ -14,8 +14,9 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 import core
 import health
 from core import (BTN_SUBS, INPUT_TEXT, KEEP_INPUT, NO_PLACE, ChatTarget, Input, drop_prompt, keyboard,
-                  last_places, place_data, place_from, place_name, send_prompt, send_weather,
+                  last_places, menu, place_data, place_from, place_name, send_prompt, send_weather,
                   short_name, subs, with_place)
+from i18n import _
 from places import build_cb, parse_coords
 from prefs import current_user
 from subs import (MAX_TIMES, SUB_LIMIT, Subscriptions, condition_met, describe as describe_sched, describe_cond,
@@ -32,19 +33,19 @@ def sched_cb(kind: str, value: str, place: Place) -> str:
 def schedule_markup(place: Place) -> InlineKeyboardMarkup:
     b = InlineKeyboardButton
     return InlineKeyboardMarkup(inline_keyboard=[
-        [b(text="Каждый час", callback_data=sched_cb("h", "1", place)),
-         b(text="Каждые 3 ч", callback_data=sched_cb("h", "3", place))],
-        [b(text="Каждые 6 ч", callback_data=sched_cb("h", "6", place)),
-         b(text="Каждые 12 ч", callback_data=sched_cb("h", "12", place))],
+        [b(text=_("Каждый час"), callback_data=sched_cb("h", "1", place)),
+         b(text=_("Каждые {h} ч", h=3), callback_data=sched_cb("h", "3", place))],
+        [b(text=_("Каждые {h} ч", h=6), callback_data=sched_cb("h", "6", place)),
+         b(text=_("Каждые {h} ч", h=12), callback_data=sched_cb("h", "12", place))],
         [b(text=f"{t}", callback_data=sched_cb("t", t.replace(":", ""), place))
          for t in ("07:00", "08:00", "09:00", "20:00")],
-        [b(text="✏️ Своё время", callback_data=sched_cb("i", "0", place)),
-         b(text="✖️ Отмена", callback_data="x")],
+        [b(text=_("✏️ Своё время"), callback_data=sched_cb("i", "0", place)),
+         b(text=_("✖️ Отмена"), callback_data="x")],
     ])
 
 
 def fmt_label(sub: dict) -> str:
-    return "кратко" if sub.get("short") else "полно"
+    return _("кратко") if sub.get("short") else _("полно")
 
 
 def sub_text(sub: dict) -> str:
@@ -54,26 +55,26 @@ def sub_text(sub: dict) -> str:
 
 
 def sub_created_markup(sub: dict) -> InlineKeyboardMarkup:
-    other = "🖼 Присылать полностью" if sub.get("short") else "📄 Присылать кратко"
+    other = _("🖼 Присылать полностью") if sub.get("short") else _("📄 Присылать кратко")
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=other, callback_data=f"su:fmt1:{sub['id']}"),
-        InlineKeyboardButton(text="🔔 Мои рассылки", callback_data="su:list")]])
+        InlineKeyboardButton(text=_("🔔 Мои рассылки"), callback_data="su:list")]])
 
 
 def subs_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     items = subs.list(user_id)
     rows = [[InlineKeyboardButton(text=f"❌ {i}. {short_name(s['name'])} — {describe_sched(s['sched'])}"[:50],
                                   callback_data=f"su:rm:{s['id']}"),
-             InlineKeyboardButton(text="🖼 Полно" if s.get("short") else "📄 Кратко",
+             InlineKeyboardButton(text=_("🖼 Полно") if s.get("short") else _("📄 Кратко"),
                                   callback_data=f"su:fmt:{s['id']}")] for i, s in enumerate(items, 1)]
-    rows.append([InlineKeyboardButton(text="➕ Новая рассылка", callback_data="su:new")])
+    rows.append([InlineKeyboardButton(text=_("➕ Новая рассылка"), callback_data="su:new")])
     if not items:
-        return ("🔔 Рассылок пока нет. Бот может сам присылать погоду каждый час, раз в сутки или в "
-                "выбранное время.", InlineKeyboardMarkup(inline_keyboard=rows))
-    lines = [f"{i}. {escape(s['name'])} — {sub_text(s)}, следующая "
-             f"{local_time(datetime.fromisoformat(s['next']), s['tz'])}"
+        return (_("🔔 Рассылок пока нет. Бот может сам присылать погоду каждый час, раз в сутки или в "
+                  "выбранное время."), InlineKeyboardMarkup(inline_keyboard=rows))
+    lines = [_("{i}. {name} — {what}, следующая {next}", i=i, name=escape(s['name']), what=sub_text(s),
+               next=local_time(datetime.fromisoformat(s['next']), s['tz']))
              for i, s in enumerate(items, 1)]
-    return "🔔 Ваши рассылки (❌ — отключить, 📄/🖼 — краткий или полный формат):\n" + "\n".join(lines), \
+    return _("🔔 Ваши рассылки (❌ — отключить, 📄/🖼 — краткий или полный формат):") + "\n" + "\n".join(lines), \
         InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -87,8 +88,8 @@ def new_sub_places(user_id: int) -> list[Place]:
 
 
 async def ask_schedule(m: Message, place: Place):
-    await m.answer(f"🔔 Как часто присылать погоду для «{escape(place.name)}»?\n"
-                   "Время для ежедневной рассылки — по местному времени этого места.",
+    await m.answer(_("🔔 Как часто присылать погоду для «{name}»?\n"
+                     "Время для ежедневной рассылки — по местному времени этого места.", name=escape(place.name)),
                    reply_markup=schedule_markup(place))
 
 
@@ -98,15 +99,16 @@ async def create_sub(m: Message, user_id: int, place: Place, sched: dict, short:
         tz = await core.client.timezone(place)
     except Exception:
         logging.exception("timezone error")
-        await m.answer("Не удалось узнать часовой пояс места, попробуйте чуть позже 🙏")
+        await m.answer(_("Не удалось узнать часовой пояс места, попробуйте чуть позже 🙏"))
         return
     sub = subs.add(user_id, place, sched, tz, datetime.now(timezone.utc), short=short, cond=cond)
     if not sub:
-        await m.answer(f"У вас уже {SUB_LIMIT} рассылок — отключите лишнюю в /subs")
+        await m.answer(_("У вас уже {n} рассылок — отключите лишнюю в /subs", n=SUB_LIMIT))
         return
-    await m.answer(f"✅ Рассылка включена: {escape(place.name)} — {sub_text(sub)}.\n"
-                   f"Следующая: {local_time(datetime.fromisoformat(sub['next']), tz)} ({tz}).\n"
-                   "Управление — /subs", reply_markup=sub_created_markup(sub))
+    await m.answer(_("✅ Рассылка включена: {name} — {what}.\nСледующая: {next} ({tz}).\nУправление — /subs",
+                     name=escape(place.name), what=sub_text(sub),
+                     next=local_time(datetime.fromisoformat(sub['next']), tz), tz=tz),
+                   reply_markup=sub_created_markup(sub))
 
 
 @router.message(Command("subscribe"))
@@ -115,14 +117,14 @@ async def subscribe_cmd(m: Message, command: CommandObject):
     args, short = split_short(command.args)
     args, cond, has_if = split_condition(args)
     if has_if and not cond:
-        await m.answer("Не понял условие. Примеры: <code>если дождь</code>, <code>если снег</code>, "
-                       "<code>если мороз</code>, <code>если ниже -5</code>, <code>если выше 25</code>")
+        await m.answer(_("Не понял условие. Примеры: <code>если дождь</code>, <code>если снег</code>, "
+                         "<code>если мороз</code>, <code>если ниже -5</code>, <code>если выше 25</code>"))
         return
     coords = parse_coords(args)
     query, sched = (args, None) if coords and not coords[2] else split_place_schedule(args)
     if cond and not sched:
-        await m.answer("Для рассылки с условием укажите и время, например: "
-                       "<code>/subscribe Бахмач 07:00 если дождь</code>")
+        await m.answer(_("Для рассылки с условием укажите и время, например: "
+                         "<code>/subscribe Бахмач 07:00 если дождь</code>"))
         return
 
     async def subscribe(target: Message, place: Place):
@@ -136,7 +138,7 @@ async def subscribe_cmd(m: Message, command: CommandObject):
         return
     place = last_places.get(uid)
     if not place:
-        await m.answer(NO_PLACE, reply_markup=keyboard)
+        await m.answer(_(NO_PLACE), reply_markup=keyboard())
         return
     await subscribe(m, place)
 
@@ -147,7 +149,7 @@ async def subs_cmd(m: Message):
     await m.answer(text, reply_markup=markup)
 
 
-@router.message(F.text == BTN_SUBS)
+@router.message(menu(BTN_SUBS))
 async def btn_subs(m: Message):
     await subs_cmd(m)
 
@@ -160,24 +162,25 @@ async def unsubscribe_cmd(m: Message, command: CommandObject):
         text, markup = subs_view(uid)
         await m.answer(text, reply_markup=markup)
         return
-    if key in ("all", "все", "всё"):
+    if key in ("all", "все", "всё", "усі", "всі"):
         n = subs.remove_all(uid)
-        await m.answer(f"🔕 Отключено рассылок: {n}" if n else "Рассылок не было.")
+        await m.answer(_("🔕 Отключено рассылок: {n}", n=n) if n else _("Рассылок не было."))
         return
     removed = subs.remove_index(uid, int(key)) if key.isdigit() else None
     if removed:
-        await m.answer(f"🔕 Отключена: {escape(removed['name'])} — {describe_sched(removed['sched'])}")
+        await m.answer(_("🔕 Отключена: {name} — {what}", name=escape(removed['name']),
+                         what=describe_sched(removed['sched'])))
     else:
-        await m.answer("Нет рассылки с таким номером. Список — /subs")
+        await m.answer(_("Нет рассылки с таким номером. Список — /subs"))
 
 
 @router.callback_query(F.data.startswith("sb:"))
 async def on_subscribe_button(cb: CallbackQuery):
     try:
-        _, lat, lon = cb.data.split(":")
+        _kind, lat, lon = cb.data.split(":")
         lat, lon = float(lat), float(lon)
     except ValueError:
-        await cb.answer("Кнопка устарела", show_alert=True)
+        await cb.answer(_("Кнопка устарела"), show_alert=True)
         return
     await cb.answer()
     if isinstance(cb.message, Message):
@@ -190,22 +193,22 @@ async def on_schedule_button(cb: CallbackQuery, state: FSMContext):
         kind, value, lat, lon = cb.data.split(":")
         lat, lon = float(lat), float(lon)
     except ValueError:
-        await cb.answer("Кнопка устарела", show_alert=True)
+        await cb.answer(_("Кнопка устарела"), show_alert=True)
         return
     if not isinstance(cb.message, Message):
-        await cb.answer("Сообщение устарело, используйте /subscribe", show_alert=True)
+        await cb.answer(_("Сообщение устарело, используйте /subscribe"), show_alert=True)
         return
     await cb.answer()
     place = Place(place_name(cb.from_user.id, lat, lon), lat, lon)
     if kind == "si":
         await state.set_state(Input.sub_time)
         await state.set_data(place_data(place))
-        await send_prompt(cb.message, state, f"Напишите время (до {MAX_TIMES}), например <code>07:30</code> или "
-                                             "<code>08:00, 20:00</code>")
+        await send_prompt(cb.message, state, _("Напишите время (до {n}), например <code>07:30</code> или "
+                                               "<code>08:00, 20:00</code>", n=MAX_TIMES))
         return
     sched = parse_schedule(value if kind == "sh" else f"{value[:2]}:{value[2:]}")
     if not sched:
-        await cb.message.answer("Не понял расписание, попробуйте /subscribe ещё раз")
+        await cb.message.answer(_("Не понял расписание, попробуйте /subscribe ещё раз"))
         return
     await create_sub(cb.message, cb.from_user.id, place, sched)
 
@@ -213,30 +216,31 @@ async def on_schedule_button(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("su:"))
 async def on_subs_button(cb: CallbackQuery):
     if not isinstance(cb.message, Message):
-        await cb.answer("Сообщение устарело, откройте /subs", show_alert=True)
+        await cb.answer(_("Сообщение устарело, откройте /subs"), show_alert=True)
         return
     uid, action = cb.from_user.id, cb.data[3:]
     if action == "new":
         await cb.answer()
         options = new_sub_places(uid)
         if not options:
-            await cb.message.answer(NO_PLACE, reply_markup=keyboard)
+            await cb.message.answer(_(NO_PLACE), reply_markup=keyboard())
         elif len(options) == 1:
             await ask_schedule(cb.message, options[0])
         else:
             rows = [[InlineKeyboardButton(text=f"📍 {p.name}"[:60], callback_data=f"sb:{p.lat:.4f}:{p.lon:.4f}")]
                     for p in options]
-            rows.append([InlineKeyboardButton(text="✖️ Отмена", callback_data="x")])
-            await cb.message.answer("🔔 Для какого места рассылка? Другой город — "
-                                    "<code>/subscribe Город</code>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+            rows.append([InlineKeyboardButton(text=_("✖️ Отмена"), callback_data="x")])
+            await cb.message.answer(_("🔔 Для какого места рассылка? Другой город — <code>/subscribe Город</code>"),
+                                    reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
         return
-    kind, _, sub_id = action.partition(":")
+    kind, _sep, sub_id = action.partition(":")
     if kind in ("fmt", "fmt1"):
         sub = subs.toggle_short(uid, int(sub_id)) if sub_id.isdigit() else None
         if not sub:
-            await cb.answer("Рассылка уже отключена", show_alert=True)
+            await cb.answer(_("Рассылка уже отключена"), show_alert=True)
             return
-        await cb.answer("Теперь кратко: три строки без графиков" if sub.get("short") else "Теперь полностью, с графиками")
+        await cb.answer(_("Теперь кратко: три строки без графиков") if sub.get("short")
+                        else _("Теперь полностью, с графиками"))
         if kind == "fmt1":  # кнопка под сообщением «Рассылка включена»
             try:
                 await cb.message.edit_reply_markup(reply_markup=sub_created_markup(sub))
@@ -245,7 +249,7 @@ async def on_subs_button(cb: CallbackQuery):
             return
     elif kind == "rm":
         removed = subs.remove(uid, int(sub_id)) if sub_id.isdigit() else None
-        await cb.answer("🔕 Рассылка отключена" if removed else "Уже отключена")
+        await cb.answer(_("🔕 Рассылка отключена") if removed else _("Уже отключена"))
     else:
         await cb.answer()
     text, markup = subs_view(uid)
@@ -260,8 +264,8 @@ async def sub_time_input(m: Message, state: FSMContext):
     """Ответ на «Напишите время» после кнопки «✏️ Своё время»."""
     sched = parse_schedule(m.text)
     if not sched or "times" not in sched:  # состояние остаётся — можно попробовать ещё раз
-        await send_prompt(m, state, f"Не понял время. Пример: <code>07:30</code> или <code>08:00, 20:00</code> "
-                                    f"(не больше {MAX_TIMES})")
+        await send_prompt(m, state, _("Не понял время. Пример: <code>07:30</code> или <code>08:00, 20:00</code> "
+                                      "(не больше {n})", n=MAX_TIMES))
         return
     place = place_from(await state.get_data())
     await drop_prompt(m.bot, m.chat.id, state)
@@ -288,12 +292,13 @@ async def scheduler(bot: Bot, every: float = 30):
             return
         if sub.get("short"):
             more = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-                text="📊 Подробно", callback_data=build_cb(1, place.lat, place.lon))]])
+                text=_("📊 Подробно"), callback_data=build_cb(1, place.lat, place.lon))]])
             fields = core.prefs.get(uid)["short"]
             await bot.send_message(uid, "🔔 " + format_short(escape(place.name), data, fields), reply_markup=more)
             return
         await send_weather(ChatTarget(bot, uid), place, 1,
-                           header=f"🔔 <b>Рассылка:</b> {sub_text(sub)}\n", data=data)
+                           header=_("🔔 <b>Рассылка:</b> {what}", what=sub_text(sub)) + "\n", data=data)
+
 
     while True:
         health.mark_tick()
