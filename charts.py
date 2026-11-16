@@ -230,7 +230,7 @@ def compare_chart(series: list[tuple[str, list[str], list, list]], days: int = 7
     return _png(fig)
 
 
-MODEL_COLORS = {"ecmwf_ifs025": "#e8590c", "icon_seamless": "#1c7ed6", "gfs_seamless": "#2f9e44"}
+MODEL_COLORS = {"ecmwf_ifs025": "#e8590c", "icon_seamless": "#1c7ed6", "gfs_seamless": "#2f9e44", "owm": "#ae3ec9"}
 
 
 def models_chart(name: str, data: dict, models: list[str], labels: dict[str, str]) -> bytes:

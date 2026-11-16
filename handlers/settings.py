@@ -13,6 +13,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import core
+import owm
 import health
 from alerts import ALERT_LIMIT, CHECK_EVERY, KINDS, Alerts, check_all
 from core import (BTN_ALERTS, BTN_PING, BTN_SETTINGS, NO_PLACE, alerts, keyboard, last_places, place_name, prefs, subs,
@@ -30,9 +31,12 @@ def settings_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     """Как в приложениях погоды: разделы «Погода» и «Качество воздуха», выбранное отмечено галочкой."""
     p = prefs.get(user_id)
     b = InlineKeyboardButton
-    lines = ["⚙️ <b>Настройки</b>", "", "<b>ПОГОДА</b> — модель прогноза Open-Meteo:"]
+    lines = ["⚙️ <b>Настройки</b>", "", "<b>ПОГОДА</b> — источник прогноза:"]
     rows = []
+    has_owm = bool(owm.api_key())
     for key, (title, about) in MODELS.items():
+        if key == owm.KEY and not has_owm and p["model"] != key:
+            continue  # без ключа OpenWeatherMap не предлагаем
         mark = "✅ " if p["model"] == key else ""
         lines.append(f"{'✅' if mark else '▫️'} <b>{title}</b> — {about}")
         rows.append([b(text=f"{mark}{title}", callback_data=f"cfg:model:{key}")])
@@ -55,6 +59,8 @@ def settings_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
         lines.append(f"{'✅' if mark else '▫️'} <b>{title}</b> — {about}")
         review_row.append(b(text=f"{mark}{title}", callback_data=f"cfg:review:{key}"))
     rows.append(review_row)
+    if p["model"] == owm.KEY and not has_owm:
+        lines += ["", "⚠️ Для OpenWeatherMap на сервере не задан ключ — до этого показываю Open-Meteo."]
     if p["air"] == "waqi" and not os.getenv("WAQI_TOKEN", "").strip():
         lines += ["", "⚠️ Для WAQI на сервере пока не задан токен — до этого показываю Open-Meteo."]
     lines += ["", "Нажмите, чтобы выбрать. Настройка действует на прогнозы, рассылки и предупреждения."]
