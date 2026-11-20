@@ -1,5 +1,7 @@
 # Погодный бот для Telegram
 
+**Русский** · [English](README.en.md)
+
 [![tests](https://github.com/testbox017-lab/weather-telegram-bot/actions/workflows/tests.yml/badge.svg)](https://github.com/testbox017-lab/weather-telegram-bot/actions/workflows/tests.yml)
 
 Python 3.10+, aiogram 3, погода от [Open-Meteo](https://open-meteo.com) (бесплатно, без ключа).
