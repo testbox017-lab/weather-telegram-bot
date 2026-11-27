@@ -138,7 +138,8 @@ class WeatherClient:
                        "wind_direction_10m,wind_gusts_10m,pressure_msl,cloud_cover,visibility,uv_index,"
                        "precipitation,is_day,dew_point_2m",
             "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code,"
-                      "wind_speed_10m,wind_gusts_10m,wind_direction_10m,relative_humidity_2m,dew_point_2m",
+                      "wind_speed_10m,wind_gusts_10m,wind_direction_10m,relative_humidity_2m,dew_point_2m,"
+                      "snowfall,visibility",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
                      "precipitation_sum,sunrise,sunset,daylight_duration,wind_speed_10m_max,"
                      "wind_gusts_10m_max,wind_direction_10m_dominant,relative_humidity_2m_mean,"

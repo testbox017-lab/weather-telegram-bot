@@ -13,8 +13,9 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import BotCommandScopeChat, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 import core
-import owm
+import databackup
 import health
+import owm
 from alerts import ALERT_LIMIT, CHECK_EVERY, KINDS, Alerts, check_all
 from core import (BTN_ALERTS, BTN_PING, BTN_SETTINGS, NO_PLACE, alerts, keyboard, last_places, menu, place_name, prefs,
                   subs, with_place)
@@ -169,7 +170,8 @@ def alerts_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     rows.append([InlineKeyboardButton(text=_("➕ Для последнего места"), callback_data="al:last")])
     if not items:
         return _("⚠️ Предупреждений пока нет. Бот может сам написать, если будет заморозок, гроза, сильный ветер, "
-                 "жара, мороз, резкий перепад температуры или скоро пойдёт дождь.\n"
+                 "жара, мороз, гололёд, сильный снег, туман, резкий перепад температуры, скоро пойдёт дождь "
+                 "или прогноз на сегодня сильно изменился.\n"
                  "Включите их кнопкой ниже или «⚠️ Предупреждения» под прогнозом."), \
             InlineKeyboardMarkup(inline_keyboard=rows)
     return _("⚠️ Места с предупреждениями (нажмите, чтобы настроить):"), InlineKeyboardMarkup(inline_keyboard=rows)
@@ -331,6 +333,20 @@ async def ping_cmd(m: Message):
     warn = await run_ping(m, m.from_user.id)
     if warn:
         await m.answer(warn)
+
+
+@router.message(Command("backup"))
+async def backup_cmd(m: Message):
+    """Бэкап данных прямо сейчас — только владельцу бота."""
+    if databackup.owner(core.DATA_DIR) != m.chat.id:
+        await m.answer(_("Эта команда только для владельца бота"))
+        return
+    try:
+        if not await databackup.send_backup(m.bot, m.chat.id, core.DATA_DIR, datetime.now(timezone.utc)):
+            await m.answer(_("Данных для бэкапа пока нет"))
+    except Exception:
+        logging.exception("backup error")
+        await m.answer(_("Не удалось собрать бэкап, попробуйте позже 🙏"))
 
 
 @router.message(menu(BTN_PING))

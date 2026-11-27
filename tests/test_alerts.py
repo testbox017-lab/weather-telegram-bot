@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from alerts import ALERT_LIMIT, KINDS, Alerts, check_all, detect, quiet
+from alerts import ALERT_LIMIT, KINDS, OLD_KINDS, Alerts, changed, check_all, detect, promise, quiet
 from weather import Place
 
 P = Place("Бахмач", 51.18, 32.83)
@@ -110,3 +110,95 @@ async def test_check_all_shares_fetch_and_respects_quiet(tmp_path):
         return make(now="2026-11-14T23:30", gusts=at(23, 20, 5))
 
     assert await check_all(s, night, send, NOW) == 0
+
+
+# ---------- Зимние предупреждения ----------
+
+def with_hourly(data, **cols):
+    data["hourly"].update(cols)
+    return data
+
+
+def test_freezing_rain_and_black_ice():
+    ev = dict((k, t) for k, _, t in detect(make(codes=at(19, 66, 3))))
+    assert ev["ice"] == "🧊 Ледяной дождь около 19:00 — на дорогах гололёд"
+    # мокро при +1°, через 3 часа −2° → гололедица
+    temps = [1.0] * 48
+    temps[20:24] = [-2.0] * 4
+    ev = detect(make(temp=1.0, temps=temps, prec=at(17, 0.5, 0.0)))
+    ice = [e for e in ev if e[0] == "ice"]
+    assert ice == [("ice", "ice:2026-11-14", "🧊 Гололедица: после осадков к 20:00 похолодает до −2°C")]
+    assert "ice" not in kinds(make(temp=1.0, temps=temps))  # без осадков — не гололедица
+    assert "ice" not in kinds(make(temp=3.0, prec=at(17, 0.5, 0.0)))  # мокро, но тепло
+
+
+def test_heavy_snow():
+    snow = [0.0] * 48
+    snow[16:20] = [1.5, 2.0, 1.5, 1.0]
+    ev = dict((k, t) for k, _, t in detect(with_hourly(make(), snowfall=snow)))
+    assert ev["snow"] == "🌨 Сильный снег: около 6 см за 12 ч, начало около 16:00"
+    snow[16:20] = [1.0, 1.0, 1.0, 0.5]
+    assert "snow" not in kinds(with_hourly(make(), snowfall=snow))
+
+
+def test_fog_by_code_and_visibility():
+    assert dict((k, t) for k, _, t in detect(make(codes=at(21, 45, 3))))["fog"] == "🌫 Туман около 21:00"
+    vis = [20000] * 48
+    vis[18] = 180
+    ev = dict((k, t) for k, _, t in detect(with_hourly(make(), visibility=vis)))
+    assert ev["fog"] == "🌫 Туман около 18:00, видимость до 180 м"
+    assert "fog" not in kinds(with_hourly(make(), visibility=[20000] * 48))
+
+
+# ---------- «Прогноз изменился» ----------
+
+def days(tmax, tmin, prec, start="2026-11-14"):
+    nxt = (datetime.fromisoformat(start) + timedelta(days=1)).date().isoformat()
+    return {"daily": {"time": [start, nxt], "temperature_2m_max": tmax, "temperature_2m_min": tmin,
+                      "precipitation_sum": prec}}
+
+
+def test_changed_temperature_and_rain():
+    promised = promise(days([5, 3], [0, -1], [0, 0.2], start="2026-11-13"))
+    assert promised == {"day": "2026-11-14", "tmax": 3, "tmin": -1, "prec": 0.2}
+    assert changed(days([4, 0], [-2, 0], [0.4, 0]), promised) == []  # мелкие расхождения
+    ev = changed(days([-2, 0], [-6, 0], [0, 0]), promised)
+    assert ev == [("change", "change:2026-11-14", "🔄 Прогноз на сегодня изменился: вчера вечером обещали "
+                   "−1…+3°, без осадков, теперь −6…−2°, без осадков")]
+    ev = changed(days([3, 0], [-1, 0], [4.3, 0]), promised)
+    assert ev[0][2].endswith("теперь −1…+3°, осадки 4 мм")
+    assert changed(days([-2, 0], [-6, 0], [0, 0], start="2026-11-15"), promised) == []  # другой день
+    assert changed(days([-2, 0], [-6, 0], [0, 0]), None) == []
+
+
+@pytest.mark.asyncio
+async def test_check_all_remembers_evening_and_warns_morning(tmp_path):
+    s = Alerts(tmp_path / "a.json")
+    s.add(1, P)
+    sent = []
+
+    async def send(uid, alert, texts):
+        sent.append(texts)
+
+    async def evening(place):
+        return {**make(now="2026-11-13T19:00"), **days([5, 3], [0, -1], [0, 0], start="2026-11-13")}
+
+    async def morning(place):
+        return {**make(now="2026-11-14T07:10"), **days([-3, 0], [-8, 0], [0, 0])}
+
+    await check_all(s, evening, send, NOW)
+    assert Alerts(tmp_path / "a.json").list(1)[0]["promise"]["day"] == "2026-11-14"
+    assert await check_all(s, morning, send, NOW) == 1 and sent[-1][0].startswith("🔄 Прогноз на сегодня")
+    assert await check_all(s, morning, send, NOW) == 0  # один раз в день
+
+
+def test_old_places_get_new_kinds(tmp_path):
+    f = tmp_path / "a.json"
+    f.write_text('{"1": [{"id": 1, "name": "Б", "lat": 51.2, "lon": 32.8, "kinds": ["frost", "storm"]}]}',
+                 encoding="utf-8")
+    a = Alerts(f).list(1)[0]
+    new = [k for k in KINDS if k not in OLD_KINDS]
+    assert a["kinds"] == ["frost", "storm", *new]
+    s = Alerts(f)
+    s.toggle(1, 1, "fog")  # выключенный вручную новый вид не включается снова
+    assert "fog" not in Alerts(f).list(1)[0]["kinds"]

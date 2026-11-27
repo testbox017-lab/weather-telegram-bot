@@ -15,7 +15,7 @@ LAYERS = [
 
 
 def upcoming(data: dict, hours: int = 12) -> list[dict]:
-    """Почасовые данные начиная с текущего часа: [{time, temp, prec, prob, code, wind, gust}, …]."""
+    """Почасовые данные начиная с текущего часа: [{time, temp, prec, prob, code, wind, gust, snow, vis}, …]."""
     h, cur = data.get("hourly") or {}, data.get("current") or {}
     times = h.get("time") or []
     if not times or not cur.get("time"):
@@ -32,8 +32,10 @@ def upcoming(data: dict, hours: int = 12) -> list[dict]:
     temp, prec, prob, code = col("temperature_2m"), col("precipitation"), col("precipitation_probability"), \
         col("weather_code")
     wind, gust = col("wind_speed_10m"), col("wind_gusts_10m")
+    snow, vis = col("snowfall"), col("visibility")
     return [{"time": times[i], "temp": temp(i), "prec": prec(i), "prob": prob(i), "code": code(i),
-             "wind": wind(i), "gust": gust(i)} for i in range(start, min(start + hours, len(times)))]
+             "wind": wind(i), "gust": gust(i), "snow": snow(i), "vis": vis(i)}
+            for i in range(start, min(start + hours, len(times)))]
 
 
 def is_wet(hour: dict) -> bool:

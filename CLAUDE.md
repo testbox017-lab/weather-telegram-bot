@@ -10,7 +10,8 @@ Telegram-бот @MyWeatherOpenMeteobot на Python 3 + aiogram 3. Погода �
 возможностей — в `README.md` (есть `README.en.md`).
 
 Основное: погода сейчас/неделя/на дату (архив с 1940), «Мои места», рассылки по расписанию (с днями
-недели и условиями), предупреждения (заморозок, гроза, порывы, жара…), качество воздуха и пыльца,
+недели и условиями), предупреждения (заморозок, гроза, порывы, жара, гололёд, снегопад, туман,
+«прогноз изменился»…), качество воздуха и пыльца,
 таблица на 3 дня, выходные, радар осадков (RainViewer + OSM), сравнение моделей ECMWF/ICON/GFS,
 итоги недели (точность прогноза), сравнение мест, климатическая норма 1991–2020, `/ping`,
 `/settings` (модель прогноза, источник воздуха, поля краткой сводки, язык), языки ru/uk/en.
@@ -27,7 +28,7 @@ Telegram-бот @MyWeatherOpenMeteobot на Python 3 + aiogram 3. Погода �
   1 запрос/с, свой User-Agent), `places.py`, `subs.py`, `alerts.py`, `advice.py` (что надеть), `air.py`,
   `astro.py` (солнце, сумерки), `charts.py`, `table.py`, `weekend.py`, `normals.py`, `radar.py`,
   `spread.py` (разброс моделей), `review.py` (ForecastLog), `owm.py`, `ensemble.py` («Среднее»),
-  `prefs.py`, `dates.py`, `health.py` + `healthcheck.py` (Docker HEALTHCHECK по `heartbeat.json`).
+  `prefs.py`, `dates.py`, `databackup.py` (бэкап в Telegram), `health.py` + `healthcheck.py` (Docker HEALTHCHECK по `heartbeat.json`).
 - `i18n.py` + `translations.py` — переводы (см. правило ниже).
 - `tools/` — живые проверки: `check_sources.py` (все модели), `check_languages.py`, `i18n_keys.py --missing en`.
 - `deploy/` — `deploy.sh`, `backup.sh`, `watchdog.sh`, `install-server.sh`, `install-watchdog.sh`, systemd-юнит.
@@ -69,6 +70,8 @@ Enter отправляет только «/cmd» (автодополнение �
   Дмитрия перед push/merge.** Обычный путь: ветка → PR → его «да» → merge → CI + deploy зелёные.
   Ручной передеплой: `gh workflow run tests.yml --ref main`.
 - Бэкап: `weather-bot-backup`, cron 03:30 UTC → `/var/backups/weather-bot` (14 копий, весь `data/`).
+  Плюс копия вне сервера: бот по воскресеньям с 09:00 UTC шлёт владельцу zip JSON-ов (`databackup.py`,
+  метка `backup_sent.json`), `/backup` — сейчас.
 - Сторож `weather-bot-watchdog` (cron */5, вне контейнера): контейнер/рестарты, ERROR в логах, бэкап >26 ч,
   диск >80 %, сбои Open-Meteo, перезагрузка. Пишет в `ADMIN_CHAT_ID` или единственному пользователю.
 - Отдельно на сервере есть **чужой для репо** `monitor_bot` (`/opt/monitor_bot`, systemd `monitor-bot.service`)
