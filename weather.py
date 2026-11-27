@@ -139,7 +139,7 @@ class WeatherClient:
                        "precipitation,is_day,dew_point_2m",
             "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code,"
                       "wind_speed_10m,wind_gusts_10m,wind_direction_10m,relative_humidity_2m,dew_point_2m,"
-                      "snowfall,visibility",
+                      "snowfall,visibility,pressure_msl",
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
                      "precipitation_sum,sunrise,sunset,daylight_duration,wind_speed_10m_max,"
                      "wind_gusts_10m_max,wind_direction_10m_dominant,relative_humidity_2m_mean,"
@@ -450,6 +450,41 @@ def yesterday_text(data: dict) -> str | None:
     return _("🔻 На {n}° холоднее, чем вчера в это время", n=-diff)
 
 
+MMHG = 0.750062            # гПа → мм рт. ст.
+PRESSURE_STEADY_MM = 2     # меньше — давление «стабильное»
+
+
+def pressure_change(data: dict, hours: int = 12) -> tuple[float, float, str] | None:
+    """(давление сейчас, изменение к часу +hours, время того часа) в мм рт. ст. по hourly."""
+    h, cur = data.get("hourly") or {}, data.get("current") or {}
+    times, vals = h.get("time") or [], h.get("pressure_msl") or []
+    if not cur.get("time") or not vals:
+        return None
+    i = next((k for k, t in enumerate(times) if t[:13] >= cur["time"][:13]), None)
+    if i is None or i + hours >= len(vals) or i + hours >= len(times) or vals[i] is None or vals[i + hours] is None:
+        return None
+    now = cur.get("pressure_msl") if cur.get("pressure_msl") is not None else vals[i]
+    return now * MMHG, (vals[i + hours] - vals[i]) * MMHG, times[i + hours][11:16]
+
+
+def pressure_trend(data: dict) -> str:
+    """«, падает (−6 мм за 12 ч)» / «, растёт (+3 мм за 12 ч)» / «, стабильное» / пусто без данных."""
+    ch = pressure_change(data)
+    if not ch:
+        return ""
+    d = round(ch[1])
+    if abs(ch[1]) < PRESSURE_STEADY_MM:
+        return _(", стабильное")
+    return (_(", падает ({d} мм за 12 ч)", d=f"−{-d}") if d < 0 else _(", растёт (+{d} мм за 12 ч)", d=d))
+
+
+def pressure_arrow(data: dict) -> str:
+    ch = pressure_change(data)
+    if not ch or abs(ch[1]) < PRESSURE_STEADY_MM:
+        return ""
+    return " ↘" if ch[1] < 0 else " ↗"
+
+
 def format_forecast(name: str, data: dict, days: int = 1) -> str:
     from datetime import date
 
@@ -488,7 +523,12 @@ def format_forecast(name: str, data: dict, days: int = 1) -> str:
         wind += _(", порывы до {gust:.0f} м/с", gust=gust)
     lines.append(wind)
     if cur.get("pressure_msl") is not None:
-        lines.append(_("🧭 Давление: {p} мм рт. ст.", p=round(cur['pressure_msl'] * 0.750062)))
+        lines.append(_("🧭 Давление: {p} мм рт. ст.", p=round(cur['pressure_msl'] * MMHG)) + pressure_trend(data))
+    from geomag import text as geomag_text
+
+    magnet = geomag_text(data.get("geomag"))
+    if magnet:
+        lines.append(magnet)
     if cur.get("cloud_cover") is not None:
         lines.append(_("☁️ Облачность: {c}%", c=cur['cloud_cover']))
     vis = visibility_text(cur.get("visibility"))
@@ -532,6 +572,7 @@ SHORT_FIELDS = {
     "rain": N_("Осадки на 12 ч"),
     "today": N_("Сегодня мин…макс"),
     "advice": N_("Что надеть"),
+    "kp": N_("Магнитные бури"),
 }
 SHORT_DEFAULT = ["now", "feels", "wind", "rain", "today"]
 
@@ -552,7 +593,11 @@ def format_short(name: str, data: dict, fields: list[str] | None = None) -> str:
     if "humidity" in on and cur.get("relative_humidity_2m") is not None:
         parts.append(f"💧 {cur['relative_humidity_2m']}%")
     if "pressure" in on and cur.get("pressure_msl") is not None:
-        parts.append(_("🧭 {p} мм", p=round(cur['pressure_msl'] * 0.750062)))
+        parts.append(_("🧭 {p} мм", p=round(cur['pressure_msl'] * MMHG)) + pressure_arrow(data))
+    if "kp" in on and data.get("geomag"):
+        from geomag import short as geomag_short
+
+        parts.append(geomag_short(data["geomag"]))
     lines = [f"📍 <b>{name}</b>" + (": " + ", ".join(parts) if parts else "")]
     if "rain" in on:
         outlook = rain_outlook(data)

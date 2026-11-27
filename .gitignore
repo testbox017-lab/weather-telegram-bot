@@ -19,3 +19,5 @@ normals.json
 forecast_log*.json
 heartbeat.json
 heartbeat.tmp
+fsm.json
+backup_sent.json

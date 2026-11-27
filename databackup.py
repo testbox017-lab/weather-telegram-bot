@@ -18,7 +18,7 @@ from i18n import _
 
 WEEKDAY, FROM_UTC = 6, 9          # воскресенье с 09:00 UTC (11:00 по Киеву зимой)
 STATE_FILE = "backup_sent.json"   # когда последний раз отправляли
-SKIP = {"heartbeat.json", STATE_FILE}
+SKIP = {"heartbeat.json", "fsm.json", STATE_FILE}
 USER_FILES = ("saved_places.json", "last_places.json", "subscriptions.json", "alerts.json", "prefs.json")
 CHECK_EVERY = 1800
 

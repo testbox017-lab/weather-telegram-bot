@@ -11,7 +11,7 @@ Telegram-бот @MyWeatherOpenMeteobot на Python 3 + aiogram 3. Погода �
 
 Основное: погода сейчас/неделя/на дату (архив с 1940), «Мои места», рассылки по расписанию (с днями
 недели и условиями), предупреждения (заморозок, гроза, порывы, жара, гололёд, снегопад, туман,
-«прогноз изменился»…), качество воздуха и пыльца,
+«прогноз изменился», скачок давления, магнитная буря…), тенденция давления и Kp в сводке, качество воздуха и пыльца,
 таблица на 3 дня, выходные, радар осадков (RainViewer + OSM), сравнение моделей ECMWF/ICON/GFS,
 итоги недели (точность прогноза), сравнение мест, климатическая норма 1991–2020, `/ping`,
 `/settings` (модель прогноза, источник воздуха, поля краткой сводки, язык), языки ru/uk/en.
@@ -28,7 +28,8 @@ Telegram-бот @MyWeatherOpenMeteobot на Python 3 + aiogram 3. Погода �
   1 запрос/с, свой User-Agent), `places.py`, `subs.py`, `alerts.py`, `advice.py` (что надеть), `air.py`,
   `astro.py` (солнце, сумерки), `charts.py`, `table.py`, `weekend.py`, `normals.py`, `radar.py`,
   `spread.py` (разброс моделей), `review.py` (ForecastLog), `owm.py`, `ensemble.py` («Среднее»),
-  `prefs.py`, `dates.py`, `databackup.py` (бэкап в Telegram), `health.py` + `healthcheck.py` (Docker HEALTHCHECK по `heartbeat.json`).
+  `prefs.py`, `dates.py`, `databackup.py` (бэкап в Telegram), `geomag.py` (Kp NOAA, магнитные бури),
+  `fsmstore.py` (FSM в `fsm.json`), `health.py` + `healthcheck.py` (Docker HEALTHCHECK по `heartbeat.json`).
 - `i18n.py` + `translations.py` — переводы (см. правило ниже).
 - `tools/` — живые проверки: `check_sources.py` (все модели), `check_languages.py`, `i18n_keys.py --missing en`.
 - `deploy/` — `deploy.sh`, `backup.sh`, `watchdog.sh`, `install-server.sh`, `install-watchdog.sh`, systemd-юнит.
@@ -37,7 +38,7 @@ Telegram-бот @MyWeatherOpenMeteobot на Python 3 + aiogram 3. Погода �
 
 Данные пользователей (JSON в `DATA_DIR`, на сервере `/opt/weather-bot/data`, в git не попадают):
 `last_places.json`, `saved_places.json`, `subscriptions.json`, `alerts.json`, `prefs.json`,
-`normals.json`, `forecast_log.json`, `heartbeat.json`.
+`normals.json`, `forecast_log.json`, `heartbeat.json`, `fsm.json`, `backup_sent.json`.
 
 Префиксы callback-данных: `pk:` выбор города, `r:` обновить, `hr:` по часам, `al:` предупреждения,
 `pl:ask:` подтверждение удаления места, `su:` рассылки (и `^s[hti]:`), `cfg:` настройки (не `st:` —
@@ -99,6 +100,8 @@ Enter отправляет только «/cmd» (автодополнение �
   без ключа пункт скрыт. Облачный контейнер Claude не достаёт до api.openweathermap.org — проверять на ПК.
 - **«Среднее»** (`ensemble.py`): ECMWF+ICON+GFS+OWM. Подвох: у Open-Meteo в мультимодельном запросе `current`
   общий (первой модели), поэтому «сейчас» каждой модели берётся из hourly на текущий час.
+- **Магнитные бури — NOAA SWPC** (`noaa-planetary-k-index-forecast.json`, список объектов, время UTC). Облачный
+  контейнер Claude до services.swpc.noaa.gov не достаёт (прокси 403) — формат проверен через WebFetch.
 - **Sinoptik не сделан** — нет API. Региональная карта погоды — пропущена.
 - **WhatsApp/Viber не делаем** — платно (WhatsApp Business API, Viber-боты с 2024), для личного бота не стоит.
 - Тихие часы 23–7 по местному времени для рассылок «каждые N ч» и предупреждений.
@@ -112,7 +115,8 @@ MVP → выбор одноимённых городов → «Мои места
 → исправления после тестирования (#3) → /settings: модели и источник воздуха (#4) → сумерки, точка росы,
 /table (#5) → поля краткой сводки, Nominatim (#6) → /radar, /models, /review (#7) → сторож сервера (#8) →
 heartbeat (#9) → повтор рассылок (#10) → OpenWeatherMap (#11) → «Среднее» (#12) → языки ru/uk/en (#13) →
-английский README (#14). Аватар бота нарисован (`/mnt/project-files/bot-icon/`), установлен через BotFather.
+английский README (#14) → CLAUDE.md (#15) → зимние предупреждения, «прогноз изменился»,
+бэкап в Telegram (#16) → давление, магнитные бури, FSM в файле (#17). Аватар бота нарисован (`/mnt/project-files/bot-icon/`), установлен через BotFather.
 
 ## Что осталось / идеи
 Отложено (смысл появится только при многих пользователях): inline-режим, работа в группах, SQLite вместо
@@ -121,7 +125,6 @@ JSON, общий кэш запросов, антифлуд, `/stats`. Дмитр
 
 ## Известные проблемы
 - Данные в JSON-файлах без блокировок между процессами — нормально для одного экземпляра, не запускай два.
-- Состояние ожидания ввода (FSM) в памяти — после перезапуска бот забывает незаконченный вопрос.
 - Первый расчёт нормы для нового места занимает несколько секунд (архив Open-Meteo).
 - Пыльца — только Европа; WAQI почти бесполезен в Украине.
 - Nominatim ограничен 1 запросом в секунду.

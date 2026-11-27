@@ -14,6 +14,7 @@ from aiogram.types import BotCommandScopeChat, CallbackQuery, InlineKeyboardButt
 
 import core
 import databackup
+import geomag
 import health
 import owm
 from alerts import ALERT_LIMIT, CHECK_EVERY, KINDS, Alerts, check_all
@@ -170,8 +171,8 @@ def alerts_view(user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     rows.append([InlineKeyboardButton(text=_("➕ Для последнего места"), callback_data="al:last")])
     if not items:
         return _("⚠️ Предупреждений пока нет. Бот может сам написать, если будет заморозок, гроза, сильный ветер, "
-                 "жара, мороз, гололёд, сильный снег, туман, резкий перепад температуры, скоро пойдёт дождь "
-                 "или прогноз на сегодня сильно изменился.\n"
+                 "жара, мороз, гололёд, сильный снег, туман, резкий перепад температуры, скоро пойдёт дождь, "
+                 "прогноз на сегодня сильно изменился, резко меняется давление или будет магнитная буря.\n"
                  "Включите их кнопкой ниже или «⚠️ Предупреждения» под прогнозом."), \
             InlineKeyboardMarkup(inline_keyboard=rows)
     return _("⚠️ Места с предупреждениями (нажмите, чтобы настроить):"), InlineKeyboardMarkup(inline_keyboard=rows)
@@ -260,8 +261,9 @@ async def alert_checker(bot: Bot):
 
     while True:
         try:
+            kp = await geomag.safe_fetch(core.client.session) if alerts.all() else None
             n = await check_all(alerts, lambda p: core.client.fetch(p, 2), send, datetime.now(timezone.utc),
-                                (TelegramForbiddenError,), model_of=lambda uid: prefs.get(uid)["model"])
+                                (TelegramForbiddenError,), model_of=lambda uid: prefs.get(uid)["model"], kp=kp)
             if n:
                 logging.info("alerts: sent %d", n)
         except Exception:

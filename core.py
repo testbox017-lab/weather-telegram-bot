@@ -367,10 +367,24 @@ async def norm_line(place: Place, day: date | None, daily: dict, wait: float = 6
     return norm_text(norm, day, tmax, tmin)
 
 
+async def add_geomag(data: dict, wait: float = 5) -> dict:
+    """Магнитная обстановка (NOAA Kp) в data["geomag"]; NOAA не ответил — без неё."""
+    import geomag
+
+    try:
+        rows = await asyncio.wait_for(geomag.safe_fetch(client.session), wait)
+    except asyncio.TimeoutError:
+        rows = None
+    data["geomag"] = geomag.for_data(rows, data)
+    return data
+
+
 async def build_weather(place: Place, days: int, header: str = "", data: dict | None = None):
     """Данные для ответа: (data, текст, картинки или None, короткая подпись для сообщения с кнопками)."""
     if data is None:
         data = await client.fetch(place, days)
+    if days == 1 and "geomag" not in data:
+        await add_geomag(data)
     text = header + format_forecast(place.name, data, days)
     model = prefs.current()["model"]
     if data.get("source") == "mean":

@@ -10,11 +10,11 @@ import os
 import aiohttp
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
 
 import core
 import databackup
+import fsmstore
 import health
 from core import CurrentUserMiddleware, ResetInputMiddleware
 from handlers import dates, extras, places, settings, subs, weather
@@ -27,9 +27,8 @@ ROUTERS = (places.router, dates.router, subs.router, settings.router, extras.rou
 
 
 def build_dispatcher() -> Dispatcher:
-    """Диспетчер с роутерами и ожиданием ввода в памяти (как раньше словарь waiting:
-    после перезапуска бот забывает, что спрашивал)."""
-    dp = Dispatcher(storage=MemoryStorage())
+    """Диспетчер с роутерами; ожидание ввода хранится в fsm.json и переживает перезапуск."""
+    dp = Dispatcher(storage=fsmstore.JsonFileStorage(core.DATA_DIR / "fsm.json"))
     dp.update.outer_middleware(CurrentUserMiddleware())
     dp.message.middleware(ResetInputMiddleware())
     dp.include_routers(*ROUTERS)
