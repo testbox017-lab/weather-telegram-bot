@@ -18,7 +18,7 @@ Python 3.10+, aiogram 3, aiohttp, matplotlib. Runs in Docker or under systemd.
 - **My places** (up to 20): `/places`, `/add City`, `/add 51.18 32.83 [name]`, `/del`, and a "⭐ Save" button under every forecast. `/compare` shows all places in one message and one chart.
 - **Weather on a date**: a calendar 16 days ahead and 14 days back, or `/date 21.11 [place]`, `tomorrow`, `yesterday`. Up to 16 days ahead is a forecast; earlier dates come from the Open-Meteo archive (back to 1940).
 - **Scheduled forecasts**: `/subs`, `/subscribe [place] [3h | 08:00, 20:00]`. Every 1/3/6/12 h, daily, or up to 3 times a day in the place's time zone; weekdays only (`by weekdays 07:30`); full or short format; conditional (`07:00 if rain`, `snow`, `frost`, `below -5`, `above 25`). Up to 5 per user, silent at night.
-- **Warnings**: `/alerts [place]`. The bot messages you about frost, precipitation in the next 1–2 h, thunderstorms, gusts from 15 m/s, heat from +30°, cold from −20°, or a daily temperature swing of 8°+. Checked every 30 minutes, each event once, silent at night.
+- **Warnings**: `/alerts [place]`. The bot messages you about frost, precipitation in the next 1–2 h, thunderstorms, gusts from 15 m/s, heat from +30°, cold from −20°, or a daily temperature swing of 8°+; in winter also black ice, snowfall from 5 cm in 12 h and fog. "🔄 Forecast changed": the bot remembers tomorrow's forecast in the evening and tells you in the morning if it moved by 5°+ or rain appeared/disappeared. Checked every 30 minutes, each event once, silent at night.
 - **Forecast source** (`/settings`): Open-Meteo model (Auto, ECMWF, ICON, GFS), an "Average" of ECMWF, ICON, GFS and OpenWeatherMap with a spread indicator, or OpenWeatherMap (needs `OWM_API_KEY`).
 - **Air quality**: `/air [place]`: EAQI, PM2.5, PM10, NO₂, O₃, the next-24-hour trend and pollen (Europe only). Source: Open-Meteo (CAMS) or WAQI (needs `WAQI_TOKEN`).
 - **3-day table**: `/table [place]`: morning, day, evening and night as monospaced text, wttr.in style.
@@ -28,6 +28,7 @@ Python 3.10+, aiogram 3, aiohttp, matplotlib. Runs in Docker or under systemd.
 - **Weekly review**: `/review [place]`: the past 7 days and how accurate the "tomorrow" forecast was. The bot logs forecasts every evening and sends a review on Sundays.
 - **Climate normals**: a "📈 Usually…" line with 1991–2020 averages from the Open-Meteo archive.
 - **Sun and moon**: dawn, solar noon, dusk (civil twilight), dew point, and hints about stuffiness, fog and black ice.
+- **Backup to Telegram**: every Sunday the bot sends its owner (`ADMIN_CHAT_ID` or the only user) a zip of the data JSON files, an off-server copy. `/backup` sends one now.
 - **Health check**: `/ping` shows the bot's server, Telegram API and Open-Meteo response times. For Docker, the bot writes `heartbeat.json` every minute and `HEALTHCHECK` marks the container `unhealthy` if the scheduler or Telegram stalls.
 
 ## Running
