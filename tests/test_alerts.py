@@ -202,3 +202,23 @@ def test_old_places_get_new_kinds(tmp_path):
     s = Alerts(f)
     s.toggle(1, 1, "fog")  # выключенный вручную новый вид не включается снова
     assert "fog" not in Alerts(f).list(1)[0]["kinds"]
+
+
+# ---------- Давление и магнитные бури ----------
+
+def test_pressure_jump():
+    p = [1015.0] * 48
+    p[15 + 24 - 1:] = [1003.0] * (48 - 38)  # за сутки −12 гПа ≈ −9 мм
+    d = with_hourly(make(), pressure_msl=p)
+    ev = dict((k, t) for k, _, t in detect(d))
+    assert ev["pressure"] == "🧭 Давление резко падает: на 9 мм рт. ст. за сутки, к 15:00 до 752 мм"
+    assert "pressure" not in kinds(with_hourly(make(), pressure_msl=[1015.0] * 48))
+
+
+def test_magnetic_storm_alert():
+    kp = [(datetime(2026, 11, 14, 18, tzinfo=timezone.utc), 6.0, "predicted")]
+    d = make()
+    d["utc_offset_seconds"] = 7200
+    ev = dict((k, t) for k, _, t in detect(d, kp, NOW))
+    assert ev["magnet"] == "🧲 Магнитная буря G2 (Kp 6) около 20:00"
+    assert "magnet" not in kinds(d) and "magnet" not in {k for k, *_ in detect(d, [(kp[0][0], 3.0, "")], NOW)}

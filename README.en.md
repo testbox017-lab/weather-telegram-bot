@@ -28,6 +28,7 @@ Python 3.10+, aiogram 3, aiohttp, matplotlib. Runs in Docker or under systemd.
 - **Weekly review**: `/review [place]`: the past 7 days and how accurate the "tomorrow" forecast was. The bot logs forecasts every evening and sends a review on Sundays.
 - **Climate normals**: a "📈 Usually…" line with 1991–2020 averages from the Open-Meteo archive.
 - **Sun and moon**: dawn, solar noon, dusk (civil twilight), dew point, and hints about stuffiness, fog and black ice.
+- **Pressure and geomagnetic storms**: the forecast shows the pressure trend ("falling, −6 mm in 12 h") and the Kp index from NOAA SWPC (free, no key). Alerts for a pressure change of 7 mmHg+ in 24 h and for a geomagnetic storm (Kp 5+, G1 and up).
 - **Backup to Telegram**: every Sunday the bot sends its owner (`ADMIN_CHAT_ID` or the only user) a zip of the data JSON files, an off-server copy. `/backup` sends one now.
 - **Health check**: `/ping` shows the bot's server, Telegram API and Open-Meteo response times. For Docker, the bot writes `heartbeat.json` every minute and `HEALTHCHECK` marks the container `unhealthy` if the scheduler or Telegram stalls.
 

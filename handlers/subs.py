@@ -294,6 +294,8 @@ async def scheduler(bot: Bot, every: float = 30):
             more = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
                 text=_("📊 Подробно"), callback_data=build_cb(1, place.lat, place.lon))]])
             fields = core.prefs.get(uid)["short"]
+            if "kp" in fields:
+                await core.add_geomag(data)
             await bot.send_message(uid, "🔔 " + format_short(escape(place.name), data, fields), reply_markup=more)
             return
         await send_weather(ChatTarget(bot, uid), place, 1,

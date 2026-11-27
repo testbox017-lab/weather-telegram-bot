@@ -26,6 +26,7 @@ FOG_VIS_M = 500                     # видимость меньше — тум
 SNOW_CM = 5                         # снегопад: столько см и больше за 12 ч
 ICE_WET_MM, ICE_COLD_C = 0.1, -1    # мокро при плюсе, а потом мороз до −1° и ниже → гололедица
 CHANGE_C, CHANGE_MM = 5, 1.0        # «прогноз изменился»: на 5° и больше или появились/пропали осадки от 1 мм
+PRESSURE_MM = 7                     # давление меняется на 7 мм рт. ст. и больше за сутки
 PROMISE_FROM = 18                   # с 18:00 по местному времени запоминаем прогноз на завтра
 
 KINDS = {  # код → подпись кнопки
@@ -40,6 +41,8 @@ KINDS = {  # код → подпись кнопки
     "snow": N_("🌨 Снегопад от 5 см"),
     "fog": N_("🌫 Туман"),
     "change": N_("🔄 Прогноз изменился"),
+    "pressure": N_("🧭 Скачок давления"),
+    "magnet": N_("🧲 Магнитная буря"),
 }
 OLD_KINDS = ("frost", "rain", "storm", "wind", "heat", "cold", "jump")  # были до зимних; новые включаются сами
 
@@ -49,8 +52,8 @@ def _deg(t: float) -> str:
     return f"+{t}" if t > 0 else ("−" + str(-t) if t < 0 else "0")
 
 
-def detect(data: dict) -> list[tuple[str, str, str]]:
-    """События в данных прогноза: [(вид, ключ для повторов, текст)]."""
+def detect(data: dict, kp: list | None = None, now: datetime | None = None) -> list[tuple[str, str, str]]:
+    """События в данных прогноза: [(вид, ключ для повторов, текст)]. kp — прогноз NOAA (geomag.parse)."""
     cur = data.get("current") or {}
     hours = upcoming(data, 24)
     if not hours or cur.get("temperature_2m") is None:
@@ -95,6 +98,12 @@ def detect(data: dict) -> list[tuple[str, str, str]]:
                           _("🥶 Мороз до {t}°C около {at}", t=_deg(t), at=h['time'][11:16])))
 
     found += _winter(hours)
+    found += _pressure(data)
+    import geomag
+
+    storm = geomag.for_data(kp, data, now)
+    if storm and storm["level"]:
+        found.append(("magnet", f"magnet:{storm['day']}", geomag.text(storm)))
 
     d = data.get("daily") or {}
     days, tmax = d.get("time") or [], d.get("temperature_2m_max") or []
@@ -155,6 +164,21 @@ def day_forecast(data: dict, i: int) -> dict | None:
         return None
     return {"day": days[i], "tmax": at("temperature_2m_max"), "tmin": at("temperature_2m_min"),
             "prec": at("precipitation_sum") or 0.0}
+
+
+def _pressure(data: dict) -> list[tuple[str, str, str]]:
+    from weather import pressure_change
+
+    ch = pressure_change(data, 24)
+    if not ch or abs(ch[1]) < PRESSURE_MM:
+        return []
+    p, d, at = ch
+    day = (data.get("current") or {}).get("time", "")[:10]
+    text = (_("🧭 Давление резко падает: на {d} мм рт. ст. за сутки, к {at} до {p} мм", d=round(-d), at=at,
+              p=round(p + d)) if d < 0 else
+            _("🧭 Давление резко растёт: на {d} мм рт. ст. за сутки, к {at} до {p} мм", d=round(d), at=at,
+              p=round(p + d)))
+    return [("pressure", f"pressure:{day}", text)]
 
 
 def promise(data: dict) -> dict | None:
@@ -325,7 +349,7 @@ class Alerts:
 
 
 async def check_all(alerts: Alerts, fetch, send, now: datetime, blocked_exc: tuple = (),
-                    model_of=lambda uid: None) -> int:
+                    model_of=lambda uid: None, kp: list | None = None) -> int:
     """Проверить все места. fetch(place) → data, send(user_id, alert, texts) — корутины.
 
     Всё для места — запрос, тексты событий и отправка — идёт от имени владельца (prefs.current_user):
@@ -346,7 +370,7 @@ async def check_all(alerts: Alerts, fetch, send, now: datetime, blocked_exc: tup
                 alerts.remember(alert, data)
             if quiet(data):
                 continue
-            texts = alerts.new_events(alert, detect(data) + changed(data, alert.get("promise")), now)
+            texts = alerts.new_events(alert, detect(data, kp, now) + changed(data, alert.get("promise")), now)
             if texts:
                 await send(uid, alert, texts)
                 sent += 1

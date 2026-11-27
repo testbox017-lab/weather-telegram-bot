@@ -108,3 +108,21 @@ def test_short_format_fields():
     assert format_short("Бахмач", d, ["humidity", "pressure"]) == "📍 <b>Бахмач</b>: 💧 88%, 🧭 765 мм"
     text = format_short("Бахмач", d, ["feels", "today", "advice"])
     assert text.splitlines()[0] == "📍 <b>Бахмач</b>: ощущается 2°" and "Сегодня 1…7°C" in text and "👕" in text
+
+
+def test_pressure_trend_and_geomag_line():
+    from weather import format_forecast, pressure_arrow, pressure_trend
+
+    a, b = hours("2026-11-14"), hours("2026-11-15")
+    d = data(pressure_msl=1015.0, today={k: a[k] + b[k] for k in a})
+    i = 15
+    p = [1015.0] * 48
+    p[i + 12] = 1007.0
+    d["hourly"]["pressure_msl"] = p
+    assert pressure_trend(d) == ", падает (−6 мм за 12 ч)" and pressure_arrow(d) == " ↘"
+    p[i + 12] = 1016.0
+    assert pressure_trend(d) == ", стабильное" and pressure_arrow(d) == ""
+    d["geomag"] = {"kp": 2.0, "at": "12:00", "day": "", "level": None}
+    t = format_forecast("X", d)
+    assert "🧲 Магнитная обстановка спокойная (Kp до 2)" in t and "761 мм рт. ст., стабильное" in t
+    assert pressure_trend({"current": {}}) == ""
